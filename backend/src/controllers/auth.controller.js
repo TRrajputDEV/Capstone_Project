@@ -83,4 +83,36 @@ const getCurrentUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, req.user, "User fetched successfully"));
 });
 
-export { register, login, logout, getCurrentUser };
+// GOOGLE OAUTH CALLBACK HANDLER
+const googleAuthCallback = asyncHandler(async (req, res) => {
+  console.log("[Google OAuth] Callback hit. User:", req.user?.email);
+  
+  const user = req.user;
+  if (!user) {
+    console.error("[Google OAuth] No user on req object");
+    return res.redirect(`${process.env.CORS_ORIGIN}/login?error=oauth_failed`);
+  }
+
+  const accessToken = user.generateAccessToken();
+  const refreshToken = user.generateRefreshToken();
+
+  user.refreshToken = refreshToken;
+  await user.save({ validateBeforeSave: false });
+
+  console.log("[Google OAuth] Tokens generated. Sending postMessage to frontend.");
+
+  const html = `
+    <script>
+      console.log("[Google OAuth Popup] Sending message to opener...");
+      window.opener.postMessage(
+        { type: "GOOGLE_AUTH_SUCCESS", accessToken: "${accessToken}" },
+        "${process.env.CORS_ORIGIN}"
+      );
+      window.close();
+    </script>
+  `;
+
+  res.send(html);
+});
+
+export { register, login, logout, getCurrentUser, googleAuthCallback };
