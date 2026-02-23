@@ -57,6 +57,9 @@ const useCanvas = (socket, roomId) => {
 
     const ctx = canvas.getContext("2d");
 
+    // Throttle cursor emit
+    let lastCursorEmit = 0;
+
     const startDrawing = (e) => {
       isDrawing.current = true;
       currentStroke.current = [];
@@ -67,10 +70,18 @@ const useCanvas = (socket, roomId) => {
     };
 
     const draw = (e) => {
-      if (!isDrawing.current) return;
       const pos = getPos(e, canvas);
-      currentStroke.current.push(pos);
 
+      // Emit cursor position throttled to every 30ms
+      const now = Date.now();
+      if (now - lastCursorEmit > 30) {
+        socket.emit("cursor-move", { roomId, x: pos.x, y: pos.y });
+        lastCursorEmit = now;
+      }
+
+      if (!isDrawing.current) return;
+
+      currentStroke.current.push(pos);
       ctx.lineTo(pos.x, pos.y);
       ctx.strokeStyle = tool.current === "erase" ? "#ffffff" : color.current;
       ctx.lineWidth = size.current;
