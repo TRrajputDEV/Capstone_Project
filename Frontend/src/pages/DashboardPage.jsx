@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTheme } from "../context/ThemeContext";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import roomService from "../services/roomService";
@@ -21,7 +22,7 @@ export default function DashboardPage() {
 
   const [rooms, setRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
-
+  const { theme, toggleTheme } = useTheme();
   const [joinId, setJoinId] = useState("");
   const [joinPassword, setJoinPassword] = useState("");
   const [joinError, setJoinError] = useState("");
@@ -78,7 +79,10 @@ export default function DashboardPage() {
     setJoinLoading(true);
     setJoinError("");
     try {
-      await roomService.joinRoom(joinId.trim().toUpperCase(), joinPassword || null);
+      await roomService.joinRoom(
+        joinId.trim().toUpperCase(),
+        joinPassword || null,
+      );
       console.log("[Dashboard] Joined room:", joinId);
       navigate(`/room/${joinId.trim().toUpperCase()}`);
     } catch (err) {
@@ -95,12 +99,13 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-
       {/* Sidebar */}
       <aside className="w-64 border-r flex flex-col p-4 shrink-0">
         <div className="mb-6">
           <h1 className="text-xl font-bold tracking-tight">⬜ Whiteboard</h1>
-          <p className="text-xs text-muted-foreground mt-1">Real-time collaboration</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Real-time collaboration
+          </p>
         </div>
 
         <Separator className="mb-4" />
@@ -122,9 +127,18 @@ export default function DashboardPage() {
           </Avatar>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">{user?.username}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+            <p className="text-xs text-muted-foreground truncate">
+              {user?.email}
+            </p>
           </div>
         </div>
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-2 mb-2"
+          onClick={toggleTheme}
+        >
+          {theme === "dark" ? "☀️ Light Mode" : "🌙 Dark Mode"}
+        </Button>
 
         <Button
           variant="outline"
@@ -137,7 +151,6 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-8">
-
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -209,7 +222,10 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground mb-3">
             Enter a board ID shared by someone else.
           </p>
-          <form onSubmit={handleJoinRoom} className="flex flex-col gap-2 max-w-sm">
+          <form
+            onSubmit={handleJoinRoom}
+            className="flex flex-col gap-2 max-w-sm"
+          >
             <Input
               placeholder="Board ID e.g. A3F9B2C1"
               value={joinId}
@@ -278,7 +294,7 @@ function RoomCard({ room, currentUserId, onClick }) {
   const isHost =
     room.createdBy?._id === currentUserId ||
     room.participants?.some(
-      (p) => p.userId === currentUserId && p.role === "host"
+      (p) => p.userId === currentUserId && p.role === "host",
     );
 
   return (

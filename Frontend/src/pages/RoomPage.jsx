@@ -5,11 +5,15 @@ import { useAuth } from "../context/AuthContext";
 import useSocket from "../hooks/useSocket";
 import useCanvas from "../hooks/useCanvas";
 import { Button } from "@/components/ui/button";
-
+import { useTheme } from "../context/ThemeContext";
 const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏", "😮"];
 const REACTION_COLORS = {
-  "👍": "#3b82f6", "❤️": "#ef4444", "😂": "#f59e0b",
-  "🔥": "#f97316", "👏": "#8b5cf6", "😮": "#06b6d4",
+  "👍": "#3b82f6",
+  "❤️": "#ef4444",
+  "😂": "#f59e0b",
+  "🔥": "#f97316",
+  "👏": "#8b5cf6",
+  "😮": "#06b6d4",
 };
 
 export default function RoomPage() {
@@ -17,6 +21,7 @@ export default function RoomPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { socket, isReady } = useSocket();
+  const { theme, toggleTheme } = useTheme();
 
   const [users, setUsers] = useState([]);
   const [chat, setChat] = useState([]);
@@ -74,7 +79,7 @@ export default function RoomPage() {
     socket.on("presence-update", ({ users }) => {
       setUsers(users);
       const me = users.find(
-        (u) => u.userId?.toString() === user?._id?.toString()
+        (u) => u.userId?.toString() === user?._id?.toString(),
       );
       setIsHost(me?.role === "host");
     });
@@ -85,7 +90,10 @@ export default function RoomPage() {
       // Floating message bubble
       const id = ++reactionIdRef.current;
       const x = 10 + Math.random() * 60;
-      setFloatingMessages((prev) => [...prev, { id, text: message.message, sender: message.senderName, x }]);
+      setFloatingMessages((prev) => [
+        ...prev,
+        { id, text: message.message, sender: message.senderName, x },
+      ]);
       setTimeout(() => {
         setFloatingMessages((prev) => prev.filter((m) => m.id !== id));
       }, 4000);
@@ -99,7 +107,7 @@ export default function RoomPage() {
     // Typing
     socket.on("user-typing", ({ username }) => {
       setTypingUsers((prev) =>
-        prev.includes(username) ? prev : [...prev, username]
+        prev.includes(username) ? prev : [...prev, username],
       );
     });
 
@@ -125,7 +133,10 @@ export default function RoomPage() {
     socket.on("receive-reaction", ({ username, emoji }) => {
       const id = ++reactionIdRef.current;
       const x = 5 + Math.random() * 85;
-      setFloatingReactions((prev) => [...prev, { id, emoji, label: username, x }]);
+      setFloatingReactions((prev) => [
+        ...prev,
+        { id, emoji, label: username, x },
+      ]);
       setTimeout(() => {
         setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
       }, 3000);
@@ -168,11 +179,23 @@ export default function RoomPage() {
     return () => {
       socket.emit("leave-room", { roomId });
       [
-        "room-state", "receive-stroke", "stroke-undo", "board-cleared",
-        "presence-update", "receive-message", "cursor-update",
-        "user-typing", "user-stopped-typing", "hand-raised",
-        "receive-reaction", "kicked", "room-ended", "room-locked",
-        "user-joined", "user-left", "error",
+        "room-state",
+        "receive-stroke",
+        "stroke-undo",
+        "board-cleared",
+        "presence-update",
+        "receive-message",
+        "cursor-update",
+        "user-typing",
+        "user-stopped-typing",
+        "hand-raised",
+        "receive-reaction",
+        "kicked",
+        "room-ended",
+        "room-locked",
+        "user-joined",
+        "user-left",
+        "error",
       ].forEach((event) => socket.off(event));
     };
   }, [socket, roomId, isReady]);
@@ -197,7 +220,8 @@ export default function RoomPage() {
     }
   };
   const handleRaiseHand = () => socket.emit("raise-hand", { roomId });
-  const handleReaction = (emoji) => socket.emit("send-reaction", { roomId, emoji });
+  const handleReaction = (emoji) =>
+    socket.emit("send-reaction", { roomId, emoji });
 
   const handleSendMessage = () => {
     if (!message.trim()) return;
@@ -237,12 +261,11 @@ export default function RoomPage() {
   };
 
   const myHandRaised = users.find(
-    (u) => u.userId?.toString() === user?._id?.toString()
+    (u) => u.userId?.toString() === user?._id?.toString(),
   )?.raisedHand;
 
   return (
     <div className="flex h-screen bg-background overflow-hidden relative">
-
       {/* Floating Reactions */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
         <AnimatePresence>
@@ -285,9 +308,7 @@ export default function RoomPage() {
               className="mb-2 max-w-xs"
             >
               <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-2xl rounded-bl-sm inline-block">
-                <span className="font-semibold text-primary">
-                  {m.sender}:{" "}
-                </span>
+                <span className="font-semibold text-primary">{m.sender}: </span>
                 {m.text}
               </div>
             </motion.div>
@@ -318,6 +339,15 @@ export default function RoomPage() {
 
       {/* Toolbar */}
       <div className="flex flex-col gap-2 p-2 border-r bg-muted w-14 items-center py-4 z-10 shrink-0">
+        <Button
+          size="icon"
+          variant="outline"
+          onClick={toggleTheme}
+          title="Toggle theme"
+          className="mb-2"
+        >
+          {theme === "dark" ? "☀️" : "🌙"}
+        </Button>
         <Button
           size="icon"
           variant={activeTool === "draw" ? "default" : "outline"}
@@ -449,16 +479,15 @@ export default function RoomPage() {
                   host
                 </span>
               )}
-              {isHost &&
-                u.userId?.toString() !== user?._id?.toString() && (
-                  <button
-                    onClick={() => handleKick(u.userId)}
-                    className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Remove"
-                  >
-                    ✕
-                  </button>
-                )}
+              {isHost && u.userId?.toString() !== user?._id?.toString() && (
+                <button
+                  onClick={() => handleKick(u.userId)}
+                  className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
 
@@ -534,8 +563,8 @@ export default function RoomPage() {
           )}
           {typingUsers.length > 0 && (
             <p className="text-xs text-muted-foreground italic">
-              {typingUsers.join(", ")}{" "}
-              {typingUsers.length === 1 ? "is" : "are"} typing...
+              {typingUsers.join(", ")} {typingUsers.length === 1 ? "is" : "are"}{" "}
+              typing...
             </p>
           )}
           <div ref={chatBottomRef} />
