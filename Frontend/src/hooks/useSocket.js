@@ -1,50 +1,51 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 
 let socketInstance = null;
 
 const useSocket = () => {
   const socketRef = useRef(null);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (!socketInstance) {
-      const token = localStorage.getItem("accessToken");
-      console.log("[Socket] Initializing connection...");
+    const token = localStorage.getItem("accessToken");
 
+    if (!socketInstance) {
+      console.log("[Socket] Initializing...");
       socketInstance = io(import.meta.env.VITE_BACKEND_ORIGIN, {
         auth: { token },
         transports: ["websocket"],
-      });
-
-      socketInstance.on("connect", () => {
-        console.log("[Socket] Connected:", socketInstance.id);
-      });
-
-      socketInstance.on("connect_error", (err) => {
-        console.error("[Socket] Connection error:", err.message);
-      });
-
-      socketInstance.on("disconnect", (reason) => {
-        console.log("[Socket] Disconnected:", reason);
-        socketInstance = null;
       });
     }
 
     socketRef.current = socketInstance;
 
+    if (socketInstance.connected) {
+      setIsReady(true);
+    } else {
+      socketInstance.on("connect", () => {
+        console.log("[Socket] Connected:", socketInstance.id);
+        setIsReady(true);
+      });
+    }
+
+    socketInstance.on("connect_error", (err) => {
+      console.error("[Socket] Connection error:", err.message);
+    });
+
     return () => {
-      // Don't disconnect on component unmount — only on logout
+      socketInstance?.off("connect");
     };
   }, []);
 
-  return socketRef.current;
+  return { socket: socketRef.current, isReady };
 };
 
 export const disconnectSocket = () => {
   if (socketInstance) {
     socketInstance.disconnect();
     socketInstance = null;
-    console.log("[Socket] Manually disconnected");
+    console.log("[Socket] Disconnected");
   }
 };
 
