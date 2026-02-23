@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import authService from "../services/authService";
+import { disconnectSocket } from "../hooks/useSocket";
 
 const AuthContext = createContext(null);
 
@@ -36,6 +37,7 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     await authService.logout();
     localStorage.removeItem("accessToken");
+    disconnectSocket();
     setUser(null);
   };
 
