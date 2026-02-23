@@ -3,7 +3,9 @@ import { createServer } from "http";
 import connectDB from "./db/index.js";
 import { app } from "./app.js";
 
-dotenv.config({ path: "./.env" });
+dotenv.config({
+  path: new URL("../.env", import.meta.url).pathname,
+});
 
 const PORT = process.env.PORT || 8000;
 
