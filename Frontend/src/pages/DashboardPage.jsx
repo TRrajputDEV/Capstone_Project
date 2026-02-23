@@ -21,10 +21,14 @@ export default function DashboardPage() {
 
   const [rooms, setRooms] = useState([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
+
   const [joinId, setJoinId] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
   const [joinError, setJoinError] = useState("");
   const [joinLoading, setJoinLoading] = useState(false);
+
   const [createName, setCreateName] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -51,11 +55,15 @@ export default function DashboardPage() {
     setCreateLoading(true);
     setCreateError("");
     try {
-      const res = await roomService.createRoom({ name: createName });
+      const res = await roomService.createRoom({
+        name: createName,
+        password: createPassword || null,
+      });
       const newRoom = res.data.data;
       console.log("[Dashboard] Room created:", newRoom.roomId);
       setDialogOpen(false);
       setCreateName("");
+      setCreatePassword("");
       navigate(`/room/${newRoom.roomId}`);
     } catch (err) {
       setCreateError(err.response?.data?.message || "Failed to create room");
@@ -70,7 +78,7 @@ export default function DashboardPage() {
     setJoinLoading(true);
     setJoinError("");
     try {
-      await roomService.joinRoom(joinId.trim().toUpperCase());
+      await roomService.joinRoom(joinId.trim().toUpperCase(), joinPassword || null);
       console.log("[Dashboard] Joined room:", joinId);
       navigate(`/room/${joinId.trim().toUpperCase()}`);
     } catch (err) {
@@ -85,18 +93,11 @@ export default function DashboardPage() {
     navigate("/login");
   };
 
-  const formatDate = (dateStr) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short", day: "numeric", year: "numeric",
-    });
-  };
-
   return (
     <div className="flex h-screen bg-background overflow-hidden">
 
       {/* Sidebar */}
       <aside className="w-64 border-r flex flex-col p-4 shrink-0">
-        {/* Logo */}
         <div className="mb-6">
           <h1 className="text-xl font-bold tracking-tight">⬜ Whiteboard</h1>
           <p className="text-xs text-muted-foreground mt-1">Real-time collaboration</p>
@@ -104,7 +105,6 @@ export default function DashboardPage() {
 
         <Separator className="mb-4" />
 
-        {/* Nav */}
         <nav className="flex flex-col gap-1 flex-1">
           <Button variant="secondary" className="justify-start gap-2">
             🏠 Dashboard
@@ -113,7 +113,6 @@ export default function DashboardPage() {
 
         <Separator className="my-4" />
 
-        {/* User profile */}
         <div className="flex items-center gap-3 mb-3">
           <Avatar className="h-9 w-9">
             <AvatarImage src={user?.avatar} />
@@ -126,6 +125,7 @@ export default function DashboardPage() {
             <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
           </div>
         </div>
+
         <Button
           variant="outline"
           className="w-full justify-start gap-2"
@@ -141,13 +141,14 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h2 className="text-2xl font-bold">Welcome back, {user?.username} 👋</h2>
+            <h2 className="text-2xl font-bold">
+              Welcome back, {user?.username} 👋
+            </h2>
             <p className="text-muted-foreground text-sm mt-1">
               Create a new board or jump back into an existing one.
             </p>
           </div>
 
-          {/* Create Room Button */}
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">+ New Board</Button>
@@ -165,6 +166,21 @@ export default function DashboardPage() {
                     value={createName}
                     onChange={(e) => setCreateName(e.target.value)}
                     required
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="roomPassword">
+                    Password{" "}
+                    <span className="text-muted-foreground text-xs">
+                      (optional)
+                    </span>
+                  </Label>
+                  <Input
+                    id="roomPassword"
+                    type="password"
+                    placeholder="Leave empty for open room"
+                    value={createPassword}
+                    onChange={(e) => setCreatePassword(e.target.value)}
                   />
                 </div>
                 {createError && (
@@ -193,15 +209,25 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground mb-3">
             Enter a board ID shared by someone else.
           </p>
-          <form onSubmit={handleJoinRoom} className="flex gap-2">
+          <form onSubmit={handleJoinRoom} className="flex flex-col gap-2 max-w-sm">
             <Input
-              placeholder="Enter board ID e.g. A3F9B2C1"
+              placeholder="Board ID e.g. A3F9B2C1"
               value={joinId}
-              onChange={(e) => setJoinId(e.target.value)}
-              className="max-w-xs uppercase"
+              onChange={(e) => setJoinId(e.target.value.toUpperCase())}
             />
-            <Button type="submit" variant="outline" disabled={joinLoading}>
-              {joinLoading ? "Joining..." : "Join"}
+            <Input
+              type="password"
+              placeholder="Password (if required)"
+              value={joinPassword}
+              onChange={(e) => setJoinPassword(e.target.value)}
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={joinLoading}
+              className="self-start"
+            >
+              {joinLoading ? "Joining..." : "Join Board"}
             </Button>
           </form>
           {joinError && (
@@ -216,14 +242,19 @@ export default function DashboardPage() {
           {loadingRooms ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-32 rounded-xl bg-muted animate-pulse" />
+                <div
+                  key={i}
+                  className="h-32 rounded-xl bg-muted animate-pulse"
+                />
               ))}
             </div>
           ) : rooms.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground border rounded-xl">
               <p className="text-4xl mb-3">⬜</p>
               <p className="font-medium">No boards yet</p>
-              <p className="text-sm mt-1">Create your first board to get started</p>
+              <p className="text-sm mt-1">
+                Create your first board to get started
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -244,34 +275,52 @@ export default function DashboardPage() {
 }
 
 function RoomCard({ room, currentUserId, onClick }) {
-  const isHost = room.participants?.some(
-    (p) => p.userId === currentUserId && p.role === "host"
-  ) || room.createdBy?._id === currentUserId;
+  const isHost =
+    room.createdBy?._id === currentUserId ||
+    room.participants?.some(
+      (p) => p.userId === currentUserId && p.role === "host"
+    );
 
   return (
     <button
       onClick={onClick}
-      className="text-left border rounded-xl p-5 hover:border-primary hover:shadow-md transition-all bg-background group"
+      className="text-left border rounded-xl p-5 hover:border-primary hover:shadow-md transition-all bg-background group w-full"
     >
       <div className="flex items-start justify-between mb-3">
         <div className="text-2xl">⬜</div>
-        {isHost && (
-          <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-            Host
-          </span>
-        )}
+        <div className="flex gap-1 flex-wrap justify-end">
+          {isHost && (
+            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+              Host
+            </span>
+          )}
+          {room.isLocked && (
+            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+              🔒 Locked
+            </span>
+          )}
+          {room.hasPassword && (
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+              🔑 Password
+            </span>
+          )}
+        </div>
       </div>
       <p className="font-semibold truncate group-hover:text-primary transition-colors">
         {room.name}
       </p>
-      <p className="text-xs text-muted-foreground mt-1 font-mono">{room.roomId}</p>
+      <p className="text-xs text-muted-foreground mt-1 font-mono">
+        {room.roomId}
+      </p>
       <div className="flex items-center justify-between mt-3">
         <span className="text-xs text-muted-foreground">
-          {room.participants?.length} member{room.participants?.length !== 1 ? "s" : ""}
+          {room.participants?.length} member
+          {room.participants?.length !== 1 ? "s" : ""}
         </span>
         <span className="text-xs text-muted-foreground">
           {new Date(room.createdAt).toLocaleDateString("en-US", {
-            month: "short", day: "numeric",
+            month: "short",
+            day: "numeric",
           })}
         </span>
       </div>

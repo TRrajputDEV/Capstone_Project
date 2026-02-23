@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import { Room } from "../models/room.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
@@ -5,15 +6,20 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 
 // CREATE ROOM
 const createRoom = asyncHandler(async (req, res) => {
-  const { name } = req.body;
+  const { name, password } = req.body;
 
   if (!name?.trim()) throw new ApiError(400, "Room name is required");
 
+  const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
+
   const room = await Room.create({
     name,
+    password: hashedPassword,
     createdBy: req.user._id,
     participants: [{ userId: req.user._id, role: "host" }],
   });
+
+  console.log("[Room] Created:", room.roomId, "by", req.user.username);
 
   return res
     .status(201)
@@ -23,12 +29,20 @@ const createRoom = asyncHandler(async (req, res) => {
 // JOIN ROOM
 const joinRoom = asyncHandler(async (req, res) => {
   const { roomId } = req.params;
+  const { password } = req.body;
 
   const room = await Room.findOne({ roomId });
   if (!room) throw new ApiError(404, "Room not found");
-  if (!room.isActive) throw new ApiError(400, "Room is no longer active");
+  if (room.isEnded) throw new ApiError(400, "This room has ended");
+  if (room.isLocked) throw new ApiError(403, "Room is locked by the host");
 
-  // Check if already a participant
+  // Check password if room is password protected
+  if (room.password) {
+    if (!password) throw new ApiError(401, "This room requires a password");
+    const isValid = await bcrypt.compare(password, room.password);
+    if (!isValid) throw new ApiError(401, "Incorrect room password");
+  }
+
   const alreadyIn = room.participants.find(
     (p) => p.userId.toString() === req.user._id.toString()
   );
@@ -38,12 +52,14 @@ const joinRoom = asyncHandler(async (req, res) => {
     await room.save();
   }
 
+  console.log("[Room] Joined:", roomId, "by", req.user.username);
+
   return res
     .status(200)
     .json(new ApiResponse(200, room, "Joined room successfully"));
 });
 
-// GET ROOM (fetch strokes + chat on load)
+// GET ROOM
 const getRoom = asyncHandler(async (req, res) => {
   const { roomId } = req.params;
 
@@ -53,7 +69,6 @@ const getRoom = asyncHandler(async (req, res) => {
 
   if (!room) throw new ApiError(404, "Room not found");
 
-  // Only participants can fetch room data
   const isMember = room.participants.find(
     (p) => p.userId._id.toString() === req.user._id.toString()
   );
@@ -68,14 +83,43 @@ const getRoom = asyncHandler(async (req, res) => {
 const getMyRooms = asyncHandler(async (req, res) => {
   const rooms = await Room.find({
     "participants.userId": req.user._id,
+    isEnded: false,
   })
-    .select("roomId name createdBy participants createdAt")
+    .select("roomId name createdBy participants createdAt isLocked password")
     .populate("createdBy", "username")
     .sort({ createdAt: -1 });
 
+  // Map hasPassword flag — don't expose actual hash
+  const sanitized = rooms.map((r) => ({
+    ...r.toObject(),
+    hasPassword: !!r.password,
+    password: undefined,
+  }));
+
   return res
     .status(200)
-    .json(new ApiResponse(200, rooms, "Rooms fetched successfully"));
+    .json(new ApiResponse(200, sanitized, "Rooms fetched successfully"));
 });
 
-export { createRoom, joinRoom, getRoom, getMyRooms };
+// DELETE ROOM — host only
+const deleteRoom = asyncHandler(async (req, res) => {
+  const { roomId } = req.params;
+
+  const room = await Room.findOne({ roomId });
+  if (!room) throw new ApiError(404, "Room not found");
+
+  if (room.createdBy.toString() !== req.user._id.toString()) {
+    throw new ApiError(403, "Only host can delete this room");
+  }
+
+  room.isEnded = true;
+  await room.save();
+
+  console.log("[Room] Ended:", roomId, "by", req.user.username);
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, {}, "Room ended successfully"));
+});
+
+export { createRoom, joinRoom, getRoom, getMyRooms, deleteRoom };
