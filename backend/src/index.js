@@ -11,16 +11,18 @@ dotenv.config({
 const PORT = process.env.PORT || 8000;
 
 const httpServer = createServer(app);
-// Socket.io will attach to httpServer in Phase 4
 
+// Initialize Socket.io
 const io = initSocket(httpServer);
 
+// Connect to MongoDB and start server
 connectDB()
   .then(() => {
     httpServer.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      console.log(`⚙️  Server running on port ${PORT}`);
+      console.log(`🔗 CORS Origin allowed: ${process.env.CORS_ORIGIN}`);
     });
   })
   .catch((err) => {
-    console.error("DB connection failed, server not started:", err);
+    console.error("❌ DB connection failed, server not started:", err);
   });

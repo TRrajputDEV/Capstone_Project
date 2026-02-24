@@ -3,45 +3,57 @@ import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
 import { registerRoomSocket } from "./roomSockets.js";
 
-// In-memory room state
-export const roomStates = {};
+const roomStates = {};
 
 export const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CORS_ORIGIN,
-      credentials: true,
+      origin: process.env.CORS_ORIGIN === "*" ? "*" : process.env.CORS_ORIGIN?.split(","),
+      methods: ["GET", "POST"],
+      credentials: true
     },
+    maxHttpBufferSize: 1e8 // Allows large image uploads
   });
 
-  // JWT Auth middleware for every socket connection
+  // 🔴 RESTORED: Authentication Middleware
+  // This intercepts the connection, verifies the token, and attaches the User to the socket
   io.use(async (socket, next) => {
     try {
+      // Get token from the frontend auth payload
       const token = socket.handshake.auth?.token;
-      console.log("[Socket] Incoming connection, token present:", !!token);
+      
+      if (!token) {
+        return next(new Error("Authentication error: No token provided"));
+      }
 
-      if (!token) return next(new Error("Authentication error: No token"));
-
+      // Verify the token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded._id).select("-password -refreshToken");
+      
+      // Find the user in the database
+      const user = await User.findById(decoded._id).select("-password -refreshToken").lean();
+      
+      if (!user) {
+        return next(new Error("Authentication error: User not found"));
+      }
 
-      if (!user) return next(new Error("Authentication error: User not found"));
-
-      socket.user = user;
-      console.log("[Socket] Authenticated:", user.username);
+      // Attach the verified user to the socket object!
+      socket.user = user; 
       next();
     } catch (err) {
-      console.error("[Socket] Auth failed:", err.message);
-      next(new Error("Authentication error: Invalid token"));
+      console.error("[Socket Auth Error]:", err.message);
+      next(new Error("Authentication error"));
     }
   });
 
   io.on("connection", (socket) => {
-    console.log("[Socket] Connected:", socket.user.username, socket.id);
+    // Now socket.user actually exists!
+    console.log(`[Socket Connected] User: ${socket.user?.username || "Unknown"} (ID: ${socket.id})`);
+
+    // Register all room-specific socket events
     registerRoomSocket(io, socket, roomStates);
 
     socket.on("disconnect", () => {
-      console.log("[Socket] Disconnected:", socket.user.username, socket.id);
+      console.log(`[Socket Disconnected] ID: ${socket.id}`);
     });
   });
 

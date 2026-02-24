@@ -3,6 +3,9 @@ import { io } from "socket.io-client";
 
 let socketInstance = null;
 
+// Fallback ensures local dev works even if .env is missing
+const SOCKET_URL = import.meta.env.VITE_BACKEND_ORIGIN || "http://localhost:8000";
+
 const useSocket = () => {
   const socketRef = useRef(null);
   const [isReady, setIsReady] = useState(false);
@@ -11,10 +14,12 @@ const useSocket = () => {
     const token = localStorage.getItem("accessToken");
 
     if (!socketInstance) {
-      console.log("[Socket] Initializing...");
-      socketInstance = io(import.meta.env.VITE_BACKEND_ORIGIN, {
+      console.log(`[Socket] Connecting to: ${SOCKET_URL}`);
+      
+      socketInstance = io(SOCKET_URL, {
         auth: { token },
-        transports: ["websocket"],
+        withCredentials: true, // CRITICAL: Must match Axios CORS policy
+        transports: ["websocket", "polling"], // Polling fallback prevents connection drops on strict networks
       });
     }
 
@@ -34,6 +39,7 @@ const useSocket = () => {
     });
 
     return () => {
+      // Don't kill the global instance on unmount, just remove the local listener
       socketInstance?.off("connect");
     };
   }, []);

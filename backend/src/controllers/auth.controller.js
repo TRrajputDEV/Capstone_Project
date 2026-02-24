@@ -3,9 +3,12 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 
+// 🔴 FIXED: Added sameSite logic. This is mandatory for Vercel <-> Render communication.
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
+  secure: process.env.NODE_ENV === "production", // Must be true in prod
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // Must be 'none' cross-domain
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days backup
 };
 
 const generateTokens = async (userId) => {
@@ -99,7 +102,11 @@ const googleAuthCallback = asyncHandler(async (req, res) => {
   user.refreshToken = refreshToken;
   await user.save({ validateBeforeSave: false });
 
-  console.log("[Google OAuth] Tokens generated. Sending postMessage to frontend.");
+  console.log("[Google OAuth] Tokens generated. Setting cookies and sending postMessage to frontend.");
+
+  // 🔴 FIXED: Explicitly set the cookies here so the browser saves the session!
+  res.cookie("accessToken", accessToken, cookieOptions);
+  res.cookie("refreshToken", refreshToken, cookieOptions);
 
   const html = `
     <script>
