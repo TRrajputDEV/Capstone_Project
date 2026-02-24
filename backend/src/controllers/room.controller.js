@@ -85,11 +85,10 @@ const getMyRooms = asyncHandler(async (req, res) => {
     "participants.userId": req.user._id,
     isEnded: false,
   })
-    .select("roomId name createdBy participants createdAt isLocked password")
+    .select("roomId name createdBy participants createdAt isLocked password thumbnail")
     .populate("createdBy", "username")
     .sort({ createdAt: -1 });
 
-  // Map hasPassword flag — don't expose actual hash
   const sanitized = rooms.map((r) => ({
     ...r.toObject(),
     hasPassword: !!r.password,
@@ -98,9 +97,8 @@ const getMyRooms = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .json(new ApiResponse(200, sanitized, "Rooms fetched successfully"));
+    .json(new ApiResponse(200, sanitized, "Rooms fetched"));
 });
-
 // DELETE ROOM — host only
 const deleteRoom = asyncHandler(async (req, res) => {
   const { roomId } = req.params;

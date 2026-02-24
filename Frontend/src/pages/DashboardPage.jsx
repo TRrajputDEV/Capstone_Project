@@ -293,52 +293,59 @@ export default function DashboardPage() {
 function RoomCard({ room, currentUserId, onClick }) {
   const isHost =
     room.createdBy?._id === currentUserId ||
-    room.participants?.some(
-      (p) => p.userId === currentUserId && p.role === "host",
-    );
+    room.participants?.some((p) => p.userId === currentUserId && p.role === "host");
 
   return (
     <button
       onClick={onClick}
-      className="text-left border rounded-xl p-5 hover:border-primary hover:shadow-md transition-all bg-background group w-full"
+      className="text-left border rounded-xl overflow-hidden hover:border-primary hover:shadow-md transition-all bg-background group w-full"
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="text-2xl">⬜</div>
-        <div className="flex gap-1 flex-wrap justify-end">
-          {isHost && (
-            <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
-              Host
-            </span>
-          )}
-          {room.isLocked && (
-            <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-              🔒 Locked
-            </span>
-          )}
-          {room.hasPassword && (
-            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-              🔑 Password
-            </span>
-          )}
-        </div>
+      {/* Thumbnail */}
+      <div className="w-full h-32 bg-muted flex items-center justify-center overflow-hidden border-b">
+        {room.thumbnail ? (
+          <img
+            src={room.thumbnail}
+            alt={room.name}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+        ) : (
+          <span className="text-4xl opacity-30">⬜</span>
+        )}
       </div>
-      <p className="font-semibold truncate group-hover:text-primary transition-colors">
-        {room.name}
-      </p>
-      <p className="text-xs text-muted-foreground mt-1 font-mono">
-        {room.roomId}
-      </p>
-      <div className="flex items-center justify-between mt-3">
-        <span className="text-xs text-muted-foreground">
-          {room.participants?.length} member
-          {room.participants?.length !== 1 ? "s" : ""}
-        </span>
-        <span className="text-xs text-muted-foreground">
-          {new Date(room.createdAt).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-          })}
-        </span>
+
+      {/* Info */}
+      <div className="p-4">
+        <div className="flex items-start justify-between mb-1">
+          <p className="font-semibold truncate group-hover:text-primary transition-colors flex-1">
+            {room.name}
+          </p>
+          <div className="flex gap-1 ml-2 shrink-0">
+            {isHost && (
+              <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">
+                Host
+              </span>
+            )}
+            {room.isLocked && (
+              <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">
+                🔒
+              </span>
+            )}
+            {room.hasPassword && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
+                🔑
+              </span>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono">{room.roomId}</p>
+        <div className="flex items-center justify-between mt-2">
+          <span className="text-xs text-muted-foreground">
+            {room.participants?.length} member{room.participants?.length !== 1 ? "s" : ""}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {new Date(room.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+          </span>
+        </div>
       </div>
     </button>
   );

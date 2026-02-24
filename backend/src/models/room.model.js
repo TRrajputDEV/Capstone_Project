@@ -6,14 +6,11 @@ const strokeSchema = new mongoose.Schema({
   points: [{ x: Number, y: Number }],
   color: String,
   size: Number,
-  // Shape fields
   shapeType: { type: String, enum: ["rect", "circle", "line", "arrow"], default: null },
   x1: Number, y1: Number, x2: Number, y2: Number,
-  // Text fields
   text: String,
   x: Number, y: Number,
   fontSize: Number,
-  // Image fields
   imageData: String,
   imgX: Number, imgY: Number,
   imgWidth: Number, imgHeight: Number,
@@ -25,8 +22,7 @@ const stickyNoteSchema = new mongoose.Schema({
   id: String,
   text: String,
   color: String,
-  x: Number,
-  y: Number,
+  x: Number, y: Number,
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   username: String,
 }, { _id: false });
@@ -35,6 +31,15 @@ const chatSchema = new mongoose.Schema({
   senderId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   senderName: String,
   message: String,
+  timestamp: { type: Date, default: Date.now },
+}, { _id: false });
+
+const activitySchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ["joined", "left", "kicked", "locked", "unlocked", "cleared"],
+  },
+  username: String,
   timestamp: { type: Date, default: Date.now },
 }, { _id: false });
 
@@ -53,6 +58,8 @@ const roomSchema = new mongoose.Schema({
   strokes: [strokeSchema],
   stickyNotes: [stickyNoteSchema],
   chat: [chatSchema],
+  activityLog: [activitySchema],
+  thumbnail: { type: String, default: null },
   isActive: { type: Boolean, default: true },
   isLocked: { type: Boolean, default: false },
   isEnded: { type: Boolean, default: false },
