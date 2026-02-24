@@ -11,6 +11,7 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: process.env.GOOGLE_CALLBACK_URL,
+      proxy: true, // 🔴 CRITICAL: This tells Passport to trust Render's HTTPS proxy!
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
