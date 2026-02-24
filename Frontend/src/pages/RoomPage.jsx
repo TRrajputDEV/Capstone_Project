@@ -8,8 +8,18 @@ import useCanvas from "../hooks/useCanvas";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
+import OnboardingTooltip from "../components/onboarding/OnboardingTooltip";
+import { useRoomOnboarding } from "../hooks/useOnboarding";
+
 const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏", "😮"];
-const STICKY_COLORS = ["#fef08a", "#86efac", "#f9a8d4", "#93c5fd", "#fdba74", "#c4b5fd"];
+const STICKY_COLORS = [
+  "#fef08a",
+  "#86efac",
+  "#f9a8d4",
+  "#93c5fd",
+  "#fdba74",
+  "#c4b5fd",
+];
 const SHAPES = [
   { id: "rect", label: "⬜" },
   { id: "circle", label: "⭕" },
@@ -79,8 +89,43 @@ export default function RoomPage() {
     typeof window !== "undefined"
       ? window.innerWidth - (chatOpen ? 350 : 86)
       : 800;
-  const canvasHeight =
-    typeof window !== "undefined" ? window.innerHeight : 600;
+  const canvasHeight = typeof window !== "undefined" ? window.innerHeight : 600;
+
+  const {
+    step: onboardStep,
+    next: onboardNext,
+    skip: onboardSkip,
+  } = useRoomOnboarding();
+
+  // Onboarding refs
+  const toolbarOnboardRef = useRef(null);
+  const panelOnboardRef = useRef(null);
+  const reactionOnboardRef = useRef(null);
+
+  const ROOM_STEPS = [
+    {
+      title: "Your drawing toolbar 🎨",
+      description:
+        "Draw, erase, add shapes, text, images and sticky notes. Use D/E/S as keyboard shortcuts.",
+      ref: toolbarOnboardRef,
+      position: "right",
+    },
+    {
+      title: "Chat & controls panel 💬",
+      description:
+        "See who's online, chat with the team, view activity, and access host controls. Press C to toggle.",
+      ref: panelOnboardRef,
+      position: "left",
+    },
+    {
+      title: "Reactions & raise hand 🎉",
+      description:
+        "Send live reactions that float across the canvas. Raise your hand to get the host's attention!",
+      ref: reactionOnboardRef,
+      position: "top",
+    },
+  ];
+  const ROOM_TOTAL = 3;
 
   // Auto scroll chat
   useEffect(() => {
@@ -90,10 +135,7 @@ export default function RoomPage() {
   // ── Keyboard Shortcuts ──────────────────────────────────
   const handleKeyboardShortcuts = useCallback(
     (e) => {
-      if (
-        e.target.tagName === "INPUT" ||
-        e.target.tagName === "TEXTAREA"
-      )
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
         return;
 
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
@@ -136,13 +178,12 @@ export default function RoomPage() {
         return;
       }
     },
-    [socket, roomId, resetZoom]
+    [socket, roomId, resetZoom],
   );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyboardShortcuts);
-    return () =>
-      window.removeEventListener("keydown", handleKeyboardShortcuts);
+    return () => window.removeEventListener("keydown", handleKeyboardShortcuts);
   }, [handleKeyboardShortcuts]);
 
   // ── Socket Events ───────────────────────────────────────
@@ -178,7 +219,7 @@ export default function RoomPage() {
     socket.on("presence-update", ({ users }) => {
       setUsers(users);
       const me = users.find(
-        (u) => u.userId?.toString() === user?._id?.toString()
+        (u) => u.userId?.toString() === user?._id?.toString(),
       );
       setIsHost(me?.role === "host");
     });
@@ -193,7 +234,7 @@ export default function RoomPage() {
       ]);
       setTimeout(
         () => setFloatingMessages((prev) => prev.filter((m) => m.id !== id)),
-        4000
+        4000,
       );
     });
 
@@ -203,7 +244,7 @@ export default function RoomPage() {
 
     socket.on("user-typing", ({ username }) => {
       setTypingUsers((prev) =>
-        prev.includes(username) ? prev : [...prev, username]
+        prev.includes(username) ? prev : [...prev, username],
       );
     });
 
@@ -220,11 +261,8 @@ export default function RoomPage() {
           { id, emoji: "🖐", label: `${username} raised hand`, x: 50 },
         ]);
         setTimeout(
-          () =>
-            setFloatingReactions((prev) =>
-              prev.filter((r) => r.id !== id)
-            ),
-          3000
+          () => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
+          3000,
         );
       }
     });
@@ -237,9 +275,8 @@ export default function RoomPage() {
         { id, emoji, label: username, x },
       ]);
       setTimeout(
-        () =>
-          setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
-        3000
+        () => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)),
+        3000,
       );
     });
 
@@ -250,7 +287,7 @@ export default function RoomPage() {
 
     socket.on("sticky-updated", ({ noteId, updates }) => {
       setStickyNotes((prev) =>
-        prev.map((n) => (n.id === noteId ? { ...n, ...updates } : n))
+        prev.map((n) => (n.id === noteId ? { ...n, ...updates } : n)),
       );
     });
 
@@ -445,7 +482,14 @@ export default function RoomPage() {
         canvas.getContext("2d").drawImage(img, imgX, imgY, w, h);
         socket.emit("draw-stroke", {
           roomId,
-          stroke: { type: "image", imageData, imgX, imgY, imgWidth: w, imgHeight: h },
+          stroke: {
+            type: "image",
+            imageData,
+            imgX,
+            imgY,
+            imgWidth: w,
+            imgHeight: h,
+          },
         });
         toast({ title: "🖼️ Image added" });
       };
@@ -492,11 +536,11 @@ export default function RoomPage() {
                 x: e.clientX - dragOffset.current.x,
                 y: e.clientY - dragOffset.current.y,
               }
-            : n
-        )
+            : n,
+        ),
       );
     },
-    [draggingNote]
+    [draggingNote],
   );
 
   const handleStickyMouseUp = useCallback(() => {
@@ -535,29 +579,35 @@ export default function RoomPage() {
   };
 
   const myHandRaised = users.find(
-    (u) => u.userId?.toString() === user?._id?.toString()
+    (u) => u.userId?.toString() === user?._id?.toString(),
   )?.raisedHand;
 
   const getActivityIcon = (type) => {
     const icons = {
-      joined: "👋", left: "🚪", kicked: "⛔",
-      locked: "🔒", unlocked: "🔓", cleared: "🗑️",
+      joined: "👋",
+      left: "🚪",
+      kicked: "⛔",
+      locked: "🔒",
+      unlocked: "🔓",
+      cleared: "🗑️",
     };
     return icons[type] || "•";
   };
 
   const getActivityText = (type) => {
     const texts = {
-      joined: "joined the room", left: "left the room",
-      kicked: "was removed", locked: "locked the room",
-      unlocked: "unlocked the room", cleared: "cleared the board",
+      joined: "joined the room",
+      left: "left the room",
+      kicked: "was removed",
+      locked: "locked the room",
+      unlocked: "unlocked the room",
+      cleared: "cleared the board",
     };
     return texts[type] || type;
   };
 
   return (
     <div className="flex h-screen bg-background overflow-hidden relative select-none">
-
       {/* ── Floating Reactions ─────────────────────────────── */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
         <AnimatePresence>
@@ -596,9 +646,7 @@ export default function RoomPage() {
               className="mb-2"
             >
               <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-2xl inline-block max-w-xs">
-                <span className="font-semibold text-primary">
-                  {m.sender}:{" "}
-                </span>
+                <span className="font-semibold text-primary">{m.sender}: </span>
                 {m.text}
               </div>
             </motion.div>
@@ -628,15 +676,19 @@ export default function RoomPage() {
       </div>
 
       {/* ── Desktop Toolbar ───────────────────────────────── */}
-      <div className="hidden md:flex flex-col gap-1.5 p-2 border-r bg-muted w-14 items-center py-4 z-10 shrink-0 overflow-y-auto">
-
+      <div
+        ref={toolbarOnboardRef}
+        className="hidden md:flex flex-col gap-1.5 p-2 border-r bg-muted w-14 items-center py-4 z-10 shrink-0 overflow-y-auto"
+      >
         {/* Draw */}
         <Button
           size="icon"
           variant={activeTool === "draw" ? "default" : "outline"}
           onClick={() => handleToolSelect("draw")}
           title="Draw (D)"
-        >✏️</Button>
+        >
+          ✏️
+        </Button>
 
         {/* Erase */}
         <Button
@@ -644,7 +696,9 @@ export default function RoomPage() {
           variant={activeTool === "erase" ? "default" : "outline"}
           onClick={() => handleToolSelect("erase")}
           title="Erase (E)"
-        >🧹</Button>
+        >
+          🧹
+        </Button>
 
         {/* Shapes */}
         <div className="relative">
@@ -680,7 +734,9 @@ export default function RoomPage() {
           variant={activeTool === "text" ? "default" : "outline"}
           onClick={() => handleToolSelect("text")}
           title="Text tool"
-        >T</Button>
+        >
+          T
+        </Button>
 
         {/* Image upload */}
         <Button
@@ -688,7 +744,9 @@ export default function RoomPage() {
           variant="outline"
           onClick={() => fileInputRef.current?.click()}
           title="Upload image"
-        >🖼️</Button>
+        >
+          🖼️
+        </Button>
         <input
           ref={fileInputRef}
           type="file"
@@ -703,7 +761,9 @@ export default function RoomPage() {
           variant={showStickyForm ? "default" : "outline"}
           onClick={() => setShowStickyForm((p) => !p)}
           title="Sticky note"
-        >📝</Button>
+        >
+          📝
+        </Button>
 
         <div className="w-full h-px bg-border my-1" />
 
@@ -735,7 +795,9 @@ export default function RoomPage() {
           variant="outline"
           onClick={handleUndo}
           title="Undo (Ctrl+Z)"
-        >↩️</Button>
+        >
+          ↩️
+        </Button>
 
         {/* Reset zoom */}
         <Button
@@ -743,7 +805,9 @@ export default function RoomPage() {
           variant="outline"
           onClick={resetZoom}
           title="Reset zoom (Ctrl+0)"
-        >🔍</Button>
+        >
+          🔍
+        </Button>
 
         {/* Export */}
         <Button
@@ -751,7 +815,9 @@ export default function RoomPage() {
           variant="outline"
           onClick={handleExport}
           title="Export PNG"
-        >📥</Button>
+        >
+          📥
+        </Button>
 
         {/* Clear — host only */}
         {isHost && (
@@ -760,7 +826,9 @@ export default function RoomPage() {
             variant="destructive"
             onClick={handleClear}
             title="Clear board"
-          >🗑️</Button>
+          >
+            🗑️
+          </Button>
         )}
 
         {/* Theme */}
@@ -815,7 +883,9 @@ export default function RoomPage() {
             <button
               onClick={() => handleDeleteSticky(note.id)}
               className="absolute top-1 right-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-            >✕</button>
+            >
+              ✕
+            </button>
           </div>
         ))}
 
@@ -855,21 +925,30 @@ export default function RoomPage() {
                   size="sm"
                   variant="outline"
                   onClick={() => setShowStickyForm(false)}
-                >Cancel</Button>
-                <Button size="sm" onClick={handleAddSticky}>Add</Button>
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleAddSticky}>
+                  Add
+                </Button>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Reaction bar */}
-        <div className="absolute bottom-16 md:bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-background/90 backdrop-blur border rounded-full px-3 py-1.5 shadow-lg z-10">
+        <div
+          ref={reactionOnboardRef}
+          className="absolute bottom-16 md:bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-background/90 backdrop-blur border rounded-full px-3 py-1.5 shadow-lg z-10"
+        >
           {REACTIONS.map((emoji) => (
             <button
               key={emoji}
               onClick={() => handleReaction(emoji)}
               className="text-xl hover:scale-125 transition-transform active:scale-95"
-            >{emoji}</button>
+            >
+              {emoji}
+            </button>
           ))}
           <div className="w-px bg-border mx-1" />
           <button
@@ -878,17 +957,21 @@ export default function RoomPage() {
               myHandRaised ? "animate-bounce" : ""
             }`}
             title="Raise hand"
-          >🖐</button>
+          >
+            🖐
+          </button>
         </div>
 
         {/* Keyboard shortcuts hint */}
         <div className="hidden md:block absolute top-3 left-3 text-xs text-muted-foreground bg-background/80 backdrop-blur px-2 py-1 rounded-lg border">
-          D=Draw · E=Erase · S=Shape · T=Chat · C=Panel · Ctrl+Z=Undo · Ctrl+Scroll=Zoom
+          D=Draw · E=Erase · S=Shape · T=Chat · C=Panel · Ctrl+Z=Undo ·
+          Ctrl+Scroll=Zoom
         </div>
       </div>
 
       {/* ── Right Panel ───────────────────────────────────── */}
       <div
+        ref={panelOnboardRef}
         className={`border-l flex flex-col transition-all duration-300 shrink-0 fixed md:relative right-0 top-0 h-full bg-background z-30 ${
           chatOpen ? "w-64" : "w-0 overflow-hidden"
         }`}
@@ -919,14 +1002,15 @@ export default function RoomPage() {
                   host
                 </span>
               )}
-              {isHost &&
-                u.userId?.toString() !== user?._id?.toString() && (
-                  <button
-                    onClick={() => handleKick(u.userId, u.username)}
-                    className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Remove"
-                  >✕</button>
-                )}
+              {isHost && u.userId?.toString() !== user?._id?.toString() && (
+                <button
+                  onClick={() => handleKick(u.userId, u.username)}
+                  className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
 
@@ -1043,7 +1127,9 @@ export default function RoomPage() {
                 placeholder="Message... (T)"
                 className="flex-1 text-sm border rounded px-2 py-1 bg-background outline-none focus:ring-1 ring-primary"
               />
-              <Button size="sm" onClick={handleSendMessage}>→</Button>
+              <Button size="sm" onClick={handleSendMessage}>
+                →
+              </Button>
             </div>
           </>
         )}
@@ -1093,32 +1179,57 @@ export default function RoomPage() {
           className={`text-xl p-2 rounded-lg ${
             activeTool === "draw" ? "bg-primary/20" : ""
           }`}
-        >✏️</button>
+        >
+          ✏️
+        </button>
         <button
           onClick={() => handleToolSelect("erase")}
           className={`text-xl p-2 rounded-lg ${
             activeTool === "erase" ? "bg-primary/20" : ""
           }`}
-        >🧹</button>
+        >
+          🧹
+        </button>
         <button
           onClick={() => handleToolSelect("shape")}
           className={`text-xl p-2 rounded-lg ${
             activeTool === "shape" ? "bg-primary/20" : ""
           }`}
-        >⬜</button>
+        >
+          ⬜
+        </button>
         <input
           type="color"
           value={activeColor}
           onChange={(e) => handleColorChange(e.target.value)}
           className="w-8 h-8 rounded cursor-pointer"
         />
-        <button onClick={handleUndo} className="text-xl p-2 rounded-lg">↩️</button>
+        <button onClick={handleUndo} className="text-xl p-2 rounded-lg">
+          ↩️
+        </button>
         <button
           onClick={() => setChatOpen((p) => !p)}
           className="text-xl p-2 rounded-lg"
-        >💬</button>
-        <button onClick={handleLeave} className="text-xl p-2 rounded-lg">🚪</button>
+        >
+          💬
+        </button>
+        <button onClick={handleLeave} className="text-xl p-2 rounded-lg">
+          🚪
+        </button>
       </div>
+      {/* Room Onboarding */}
+      {onboardStep && connected && (
+        <OnboardingTooltip
+          step={onboardStep}
+          total={ROOM_TOTAL}
+          title={ROOM_STEPS[onboardStep - 1].title}
+          description={ROOM_STEPS[onboardStep - 1].description}
+          position={ROOM_STEPS[onboardStep - 1].position}
+          targetRef={ROOM_STEPS[onboardStep - 1].ref}
+          onNext={() => onboardNext(ROOM_TOTAL)}
+          onSkip={onboardSkip}
+        />
+      )}
     </div>
   );
 }
