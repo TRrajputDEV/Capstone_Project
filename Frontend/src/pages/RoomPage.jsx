@@ -9,6 +9,13 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
 const REACTIONS = ["👍", "❤️", "😂", "🔥", "👏", "😮"];
+const STICKY_COLORS = ["#fef08a", "#86efac", "#f9a8d4", "#93c5fd", "#fdba74", "#c4b5fd"];
+const SHAPES = [
+  { id: "rect", label: "⬜" },
+  { id: "circle", label: "⭕" },
+  { id: "line", label: "╱" },
+  { id: "arrow", label: "→" },
+];
 
 export default function RoomPage() {
   const { roomId } = useParams();
@@ -25,12 +32,21 @@ export default function RoomPage() {
   const [connected, setConnected] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
-  const [toolbarOpen, setToolbarOpen] = useState(true);
 
-  // Canvas tool states
+  // Tool states
   const [activeTool, setActiveTool] = useState("draw");
+  const [activeShape, setActiveShape] = useState("rect");
   const [activeColor, setActiveColor] = useState("#000000");
   const [activeSize, setActiveSize] = useState(4);
+  const [showShapeMenu, setShowShapeMenu] = useState(false);
+
+  // Sticky notes
+  const [stickyNotes, setStickyNotes] = useState([]);
+  const [showStickyForm, setShowStickyForm] = useState(false);
+  const [stickyText, setStickyText] = useState("");
+  const [stickyColor, setStickyColor] = useState("#fef08a");
+  const [draggingNote, setDraggingNote] = useState(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
 
   // Chunk C states
   const [cursors, setCursors] = useState({});
@@ -42,85 +58,59 @@ export default function RoomPage() {
   const chatBottomRef = useRef(null);
   const reactionIdRef = useRef(0);
   const messageInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  const { canvasRef, replayStrokes, drawStroke, setTool, setColor, setSize, undo } =
-    useCanvas(socket, roomId);
+  const {
+    canvasRef, previewCanvasRef,
+    replayStrokes, drawStroke,
+    setTool, setColor, setSize, setShapeType,
+  } = useCanvas(socket, roomId);
 
-  // Auto scroll chat
+  // Canvas dimensions
+  const canvasWidth = typeof window !== "undefined"
+    ? window.innerWidth - (chatOpen ? 350 : 86)
+    : 800;
+  const canvasHeight = typeof window !== "undefined"
+    ? window.innerHeight
+    : 600;
+
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
 
-  // ─── Keyboard Shortcuts ───────────────────────────────────
-  const handleKeyboardShortcuts = useCallback(
-    (e) => {
-      // Don't fire if user is typing in input
-      if (
-        e.target.tagName === "INPUT" ||
-        e.target.tagName === "TEXTAREA"
-      )
-        return;
+  // ── Keyboard shortcuts ──────────────────────────────────
+  const handleKeyboardShortcuts = useCallback((e) => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
 
-      // Ctrl+Z — Undo
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
-        e.preventDefault();
-        socket?.emit("undo", { roomId });
-        toast({ title: "↩ Undone" });
-        return;
-      }
-
-      // D — Draw tool
-      if (e.key === "d" || e.key === "D") {
-        handleToolSelect("draw");
-        toast({ title: "✏️ Draw tool selected" });
-        return;
-      }
-
-      // E — Eraser
-      if (e.key === "e" || e.key === "E") {
-        handleToolSelect("erase");
-        toast({ title: "🧹 Eraser selected" });
-        return;
-      }
-
-      // C — Toggle chat
-      if (e.key === "c" || e.key === "C") {
-        setChatOpen((prev) => !prev);
-        return;
-      }
-
-      // T — Focus chat input
-      if (e.key === "t" || e.key === "T") {
-        e.preventDefault();
-        messageInputRef.current?.focus();
-        return;
-      }
-
-      // Escape — blur everything
-      if (e.key === "Escape") {
-        messageInputRef.current?.blur();
-        return;
-      }
-    },
-    [socket, roomId]
-  );
+    if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      e.preventDefault();
+      socket?.emit("undo", { roomId });
+      toast({ title: "↩ Undone" });
+      return;
+    }
+    if (e.key === "d" || e.key === "D") { handleToolSelect("draw"); return; }
+    if (e.key === "e" || e.key === "E") { handleToolSelect("erase"); return; }
+    if (e.key === "s" || e.key === "S") { handleToolSelect("shape"); return; }
+    if (e.key === "t" || e.key === "T") { e.preventDefault(); messageInputRef.current?.focus(); return; }
+    if (e.key === "c" || e.key === "C") { setChatOpen((p) => !p); return; }
+    if (e.key === "Escape") { messageInputRef.current?.blur(); return; }
+  }, [socket, roomId]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyboardShortcuts);
     return () => window.removeEventListener("keydown", handleKeyboardShortcuts);
   }, [handleKeyboardShortcuts]);
-  // ─────────────────────────────────────────────────────────
 
+  // ── Socket events ───────────────────────────────────────
   useEffect(() => {
     if (!socket || !roomId || !isReady) return;
 
-    console.log("[Room] Socket ready, joining room:", roomId);
     socket.emit("join-room", { roomId });
 
-    socket.on("room-state", ({ strokes, chat }) => {
-      console.log("[Room] State received. Strokes:", strokes.length);
+    socket.on("room-state", ({ strokes, chat, stickyNotes }) => {
       replayStrokes(strokes);
       setChat(chat);
+      setStickyNotes(stickyNotes || []);
       setConnected(true);
       toast({ title: "✅ Connected to room" });
     });
@@ -130,32 +120,25 @@ export default function RoomPage() {
 
     socket.on("board-cleared", () => {
       const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      toast({ title: "🗑️ Board cleared by host" });
+      if (canvas) canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      setStickyNotes([]);
+      toast({ title: "🗑️ Board cleared" });
     });
 
     socket.on("presence-update", ({ users }) => {
       setUsers(users);
-      const me = users.find(
-        (u) => u.userId?.toString() === user?._id?.toString()
-      );
+      const me = users.find((u) => u.userId?.toString() === user?._id?.toString());
       setIsHost(me?.role === "host");
     });
 
     socket.on("receive-message", ({ message }) => {
       setChat((prev) => [...prev, message]);
       const id = ++reactionIdRef.current;
-      const x = 10 + Math.random() * 60;
       setFloatingMessages((prev) => [
         ...prev,
-        { id, text: message.message, sender: message.senderName, x },
+        { id, text: message.message, sender: message.senderName, x: 10 + Math.random() * 60 },
       ]);
-      setTimeout(() => {
-        setFloatingMessages((prev) => prev.filter((m) => m.id !== id));
-      }, 4000);
+      setTimeout(() => setFloatingMessages((prev) => prev.filter((m) => m.id !== id)), 4000);
     });
 
     socket.on("cursor-update", ({ userId, username, x, y }) => {
@@ -163,11 +146,8 @@ export default function RoomPage() {
     });
 
     socket.on("user-typing", ({ username }) => {
-      setTypingUsers((prev) =>
-        prev.includes(username) ? prev : [...prev, username]
-      );
+      setTypingUsers((prev) => prev.includes(username) ? prev : [...prev, username]);
     });
-
     socket.on("user-stopped-typing", ({ username }) => {
       setTypingUsers((prev) => prev.filter((u) => u !== username));
     });
@@ -176,58 +156,48 @@ export default function RoomPage() {
       if (raisedHand) {
         toast({ title: `🖐 ${username} raised their hand` });
         const id = ++reactionIdRef.current;
-        setFloatingReactions((prev) => [
-          ...prev,
-          { id, emoji: "🖐", label: `${username} raised hand`, x: 50 },
-        ]);
-        setTimeout(() => {
-          setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
-        }, 3000);
+        setFloatingReactions((prev) => [...prev, { id, emoji: "🖐", label: `${username} raised hand`, x: 50 }]);
+        setTimeout(() => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)), 3000);
       }
     });
 
     socket.on("receive-reaction", ({ username, emoji }) => {
       const id = ++reactionIdRef.current;
-      const x = 5 + Math.random() * 85;
-      setFloatingReactions((prev) => [
-        ...prev,
-        { id, emoji, label: username, x },
-      ]);
-      setTimeout(() => {
-        setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
-      }, 3000);
+      setFloatingReactions((prev) => [...prev, { id, emoji, label: username, x: 5 + Math.random() * 85 }]);
+      setTimeout(() => setFloatingReactions((prev) => prev.filter((r) => r.id !== id)), 3000);
     });
 
-    socket.on("user-joined", ({ username }) => {
-      toast({ title: `👋 ${username} joined` });
+    // Sticky note events
+    socket.on("receive-sticky", ({ note }) => {
+      setStickyNotes((prev) => [...prev, note]);
+    });
+    socket.on("sticky-updated", ({ noteId, updates }) => {
+      setStickyNotes((prev) =>
+        prev.map((n) => n.id === noteId ? { ...n, ...updates } : n)
+      );
+    });
+    socket.on("sticky-deleted", ({ noteId }) => {
+      setStickyNotes((prev) => prev.filter((n) => n.id !== noteId));
     });
 
+    socket.on("user-joined", ({ username }) => toast({ title: `👋 ${username} joined` }));
     socket.on("user-left", ({ username }) => {
       toast({ title: `👋 ${username} left` });
-      setCursors((prev) => {
-        const copy = { ...prev };
-        delete copy[username];
-        return copy;
-      });
+      setCursors((prev) => { const c = { ...prev }; delete c[username]; return c; });
     });
-
     socket.on("kicked", ({ message }) => {
       toast({ title: message, variant: "destructive" });
       setTimeout(() => navigate("/dashboard"), 1500);
     });
-
     socket.on("room-ended", ({ message }) => {
       toast({ title: message, variant: "destructive" });
       setTimeout(() => navigate("/dashboard"), 1500);
     });
-
     socket.on("room-locked", ({ isLocked }) => {
       setIsLocked(isLocked);
       toast({ title: isLocked ? "🔒 Room locked" : "🔓 Room unlocked" });
     });
-
     socket.on("error", ({ message }) => {
-      console.error("[Room] Error:", message);
       toast({ title: message, variant: "destructive" });
       setTimeout(() => navigate("/dashboard"), 1500);
     });
@@ -237,28 +207,31 @@ export default function RoomPage() {
       [
         "room-state", "receive-stroke", "stroke-undo", "board-cleared",
         "presence-update", "receive-message", "cursor-update",
-        "user-typing", "user-stopped-typing", "hand-raised",
-        "receive-reaction", "kicked", "room-ended", "room-locked",
-        "user-joined", "user-left", "error",
-      ].forEach((e) => socket.off(e));
+        "user-typing", "user-stopped-typing", "hand-raised", "receive-reaction",
+        "receive-sticky", "sticky-updated", "sticky-deleted",
+        "user-joined", "user-left", "kicked", "room-ended", "room-locked", "error",
+      ].forEach((ev) => socket.off(ev));
     };
   }, [socket, roomId, isReady]);
 
-  // ─── Handlers ─────────────────────────────────────────────
+  // ── Handlers ────────────────────────────────────────────
   const handleToolSelect = (t) => {
     setActiveTool(t);
     setTool(t);
+    setShowShapeMenu(false);
+    toast({ title: `Tool: ${t}` });
   };
 
-  const handleColorChange = (c) => {
-    setActiveColor(c);
-    setColor(c);
+  const handleShapeSelect = (s) => {
+    setActiveShape(s);
+    setShapeType(s);
+    setActiveTool("shape");
+    setTool("shape");
+    setShowShapeMenu(false);
   };
 
-  const handleSizeChange = (s) => {
-    setActiveSize(s);
-    setSize(s);
-  };
+  const handleColorChange = (c) => { setActiveColor(c); setColor(c); };
+  const handleSizeChange = (s) => { setActiveSize(s); setSize(s); };
 
   const handleUndo = () => {
     socket?.emit("undo", { roomId });
@@ -278,7 +251,7 @@ export default function RoomPage() {
   };
 
   const handleKick = (targetUserId, username) => {
-    if (window.confirm(`Remove ${username} from the room?`)) {
+    if (window.confirm(`Remove ${username}?`)) {
       socket.emit("kick-participant", { roomId, targetUserId });
     }
   };
@@ -286,15 +259,14 @@ export default function RoomPage() {
   const handleToggleLock = () => socket.emit("toggle-lock", { roomId });
 
   const handleEndRoom = () => {
-    if (window.confirm("End this session for everyone?")) {
+    if (window.confirm("End session for everyone?")) {
       socket.emit("end-room", { roomId });
       navigate("/dashboard");
     }
   };
 
   const handleRaiseHand = () => socket.emit("raise-hand", { roomId });
-  const handleReaction = (emoji) =>
-    socket.emit("send-reaction", { roomId, emoji });
+  const handleReaction = (emoji) => socket.emit("send-reaction", { roomId, emoji });
 
   const handleSendMessage = () => {
     if (!message.trim()) return;
@@ -308,28 +280,136 @@ export default function RoomPage() {
     setMessage(e.target.value);
     socket.emit("typing-start", { roomId });
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      socket.emit("typing-stop", { roomId });
-    }, 1500);
+    typingTimeoutRef.current = setTimeout(() => socket.emit("typing-stop", { roomId }), 1500);
   };
 
-  const copyRoomId = () => {
-    navigator.clipboard.writeText(roomId);
-    toast({ title: "📋 Room ID copied!" });
-  };
-
+  const copyRoomId = () => { navigator.clipboard.writeText(roomId); toast({ title: "📋 Room ID copied!" }); };
   const copyInviteLink = () => {
     navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`);
     toast({ title: "🔗 Invite link copied!" });
   };
 
+  // ── Image upload ────────────────────────────────────────
+  const handleImageUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const imageData = ev.target.result;
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        // Scale to fit canvas
+        const maxW = canvas.width * 0.5;
+        const maxH = canvas.height * 0.5;
+        let w = img.width, h = img.height;
+        if (w > maxW) { h = (h * maxW) / w; w = maxW; }
+        if (h > maxH) { w = (w * maxH) / h; h = maxH; }
+
+        const imgX = (canvas.width - w) / 2;
+        const imgY = (canvas.height - h) / 2;
+
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, imgX, imgY, w, h);
+
+        const stroke = {
+          type: "image",
+          imageData,
+          imgX, imgY,
+          imgWidth: w,
+          imgHeight: h,
+        };
+        socket.emit("draw-stroke", { roomId, stroke });
+        toast({ title: "🖼️ Image added to canvas" });
+      };
+      img.src = imageData;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  // ── Sticky notes ────────────────────────────────────────
+  const handleAddSticky = () => {
+    if (!stickyText.trim()) return;
+    const note = {
+      id: `sticky_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      text: stickyText,
+      color: stickyColor,
+      x: 100 + Math.random() * 200,
+      y: 100 + Math.random() * 200,
+    };
+    socket.emit("add-sticky", { roomId, note });
+    setStickyText("");
+    setShowStickyForm(false);
+    toast({ title: "📝 Sticky note added" });
+  };
+
+  const handleDeleteSticky = (noteId) => {
+    socket.emit("delete-sticky", { roomId, noteId });
+  };
+
+  const handleStickyMouseDown = (e, note) => {
+    e.preventDefault();
+    setDraggingNote(note.id);
+    dragOffset.current = {
+      x: e.clientX - note.x,
+      y: e.clientY - note.y,
+    };
+  };
+
+  const handleStickyMouseMove = useCallback((e) => {
+    if (!draggingNote) return;
+    const newX = e.clientX - dragOffset.current.x;
+    const newY = e.clientY - dragOffset.current.y;
+    setStickyNotes((prev) =>
+      prev.map((n) => n.id === draggingNote ? { ...n, x: newX, y: newY } : n)
+    );
+  }, [draggingNote]);
+
+  const handleStickyMouseUp = useCallback(() => {
+    if (!draggingNote) return;
+    const note = stickyNotes.find((n) => n.id === draggingNote);
+    if (note) {
+      socket.emit("update-sticky", {
+        roomId,
+        noteId: draggingNote,
+        updates: { x: note.x, y: note.y },
+      });
+    }
+    setDraggingNote(null);
+  }, [draggingNote, stickyNotes, socket, roomId]);
+
+  useEffect(() => {
+    if (draggingNote) {
+      window.addEventListener("mousemove", handleStickyMouseMove);
+      window.addEventListener("mouseup", handleStickyMouseUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", handleStickyMouseMove);
+      window.removeEventListener("mouseup", handleStickyMouseUp);
+    };
+  }, [draggingNote, handleStickyMouseMove, handleStickyMouseUp]);
+
+  // Export canvas as PNG
+  const handleExport = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const link = document.createElement("a");
+    link.download = `whiteboard-${roomId}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    toast({ title: "📥 Canvas exported as PNG" });
+  };
+
   const myHandRaised = users.find(
     (u) => u.userId?.toString() === user?._id?.toString()
   )?.raisedHand;
-  // ─────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden relative">
+    <div className="flex h-screen bg-background overflow-hidden relative select-none">
 
       {/* Floating Reactions */}
       <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
@@ -354,21 +434,18 @@ export default function RoomPage() {
       </div>
 
       {/* Floating Chat Messages */}
-      <div
-        className="absolute pointer-events-none z-20 overflow-hidden"
-        style={{ bottom: "80px", left: "70px", width: "280px" }}
-      >
+      <div className="absolute pointer-events-none z-20 overflow-hidden"
+        style={{ bottom: "80px", left: "70px", width: "280px" }}>
         <AnimatePresence>
           {floatingMessages.map((m) => (
-            <motion.div
-              key={m.id}
+            <motion.div key={m.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -30 }}
               transition={{ duration: 0.3 }}
               className="mb-2"
             >
-              <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-2xl rounded-bl-sm inline-block max-w-xs">
+              <div className="bg-black/70 backdrop-blur-sm text-white text-sm px-3 py-1.5 rounded-2xl inline-block max-w-xs">
                 <span className="font-semibold text-primary">{m.sender}: </span>
                 {m.text}
               </div>
@@ -380,16 +457,10 @@ export default function RoomPage() {
       {/* Live Cursors */}
       <div className="absolute inset-0 pointer-events-none z-10">
         {Object.entries(cursors).map(([userId, cursor]) => (
-          <div
-            key={userId}
-            className="absolute transition-all duration-75"
-            style={{ left: cursor.x + 56, top: cursor.y }}
-          >
+          <div key={userId} className="absolute transition-all duration-75"
+            style={{ left: cursor.x + 56, top: cursor.y }}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M0 0L0 11.5L3.5 8.5L6 14L8 13L5.5 7.5L10 7.5L0 0Z"
-                fill="#7c3aed"
-              />
+              <path d="M0 0L0 11.5L3.5 8.5L6 14L8 13L5.5 7.5L10 7.5L0 0Z" fill="#7c3aed" />
             </svg>
             <span className="text-xs bg-violet-600 text-white px-1.5 py-0.5 rounded-full whitespace-nowrap -ml-1 mt-1 block">
               {cursor.username}
@@ -399,200 +470,208 @@ export default function RoomPage() {
       </div>
 
       {/* ── Toolbar ─────────────────────────────────────────── */}
-      {/* Mobile: bottom bar | Desktop: left sidebar */}
-      <div className="
-        hidden md:flex
-        flex-col gap-2 p-2 border-r bg-muted w-14
-        items-center py-4 z-10 shrink-0
-      ">
-        <Button
-          size="icon"
-          variant={activeTool === "draw" ? "default" : "outline"}
-          onClick={() => handleToolSelect("draw")}
-          title="Draw (D)"
-        >✏️</Button>
+      <div className="hidden md:flex flex-col gap-1.5 p-2 border-r bg-muted w-14 items-center py-4 z-10 shrink-0 overflow-y-auto">
 
-        <Button
-          size="icon"
-          variant={activeTool === "erase" ? "default" : "outline"}
-          onClick={() => handleToolSelect("erase")}
-          title="Erase (E)"
-        >🧹</Button>
+        {/* Draw */}
+        <Button size="icon" variant={activeTool === "draw" ? "default" : "outline"}
+          onClick={() => handleToolSelect("draw")} title="Draw (D)">✏️</Button>
 
-        <input
-          type="color"
-          value={activeColor}
+        {/* Erase */}
+        <Button size="icon" variant={activeTool === "erase" ? "default" : "outline"}
+          onClick={() => handleToolSelect("erase")} title="Erase (E)">🧹</Button>
+
+        {/* Shapes */}
+        <div className="relative">
+          <Button size="icon" variant={activeTool === "shape" ? "default" : "outline"}
+            onClick={() => setShowShapeMenu((p) => !p)} title="Shapes (S)">
+            {SHAPES.find((s) => s.id === activeShape)?.label || "⬜"}
+          </Button>
+          {showShapeMenu && (
+            <div className="absolute left-12 top-0 bg-background border rounded-lg shadow-lg p-1 flex flex-col gap-1 z-50">
+              {SHAPES.map((s) => (
+                <button key={s.id}
+                  onClick={() => handleShapeSelect(s.id)}
+                  className={`w-8 h-8 rounded text-base hover:bg-muted flex items-center justify-center ${activeShape === s.id ? "bg-primary/20" : ""}`}
+                  title={s.id}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Text */}
+        <Button size="icon" variant={activeTool === "text" ? "default" : "outline"}
+          onClick={() => handleToolSelect("text")} title="Text">T</Button>
+
+        {/* Image upload */}
+        <Button size="icon" variant="outline"
+          onClick={() => fileInputRef.current?.click()} title="Upload image">
+          🖼️
+        </Button>
+        <input ref={fileInputRef} type="file" accept="image/*"
+          className="hidden" onChange={handleImageUpload} />
+
+        {/* Sticky note */}
+        <Button size="icon" variant={showStickyForm ? "default" : "outline"}
+          onClick={() => setShowStickyForm((p) => !p)} title="Sticky note">
+          📝
+        </Button>
+
+        <div className="w-full h-px bg-border my-1" />
+
+        {/* Color */}
+        <input type="color" value={activeColor}
           onChange={(e) => handleColorChange(e.target.value)}
           className="w-8 h-8 rounded cursor-pointer border-2 border-muted-foreground"
-          title="Color"
-        />
+          title="Color" />
 
-        <input
-          type="range"
-          min="1" max="20"
-          value={activeSize}
+        {/* Size */}
+        <input type="range" min="1" max="20" value={activeSize}
           onChange={(e) => handleSizeChange(Number(e.target.value))}
-          className="w-10 rotate-90 mt-6 mb-6"
-          title="Brush size"
-        />
+          className="w-10 rotate-90 my-5" title="Brush size" />
 
-        <div className="mt-auto flex flex-col gap-2">
-          <Button
-            size="icon" variant="outline"
-            onClick={handleUndo}
-            title="Undo (Ctrl+Z)"
-          >↩️</Button>
+        <div className="w-full h-px bg-border my-1" />
 
-          {isHost && (
-            <Button
-              size="icon" variant="destructive"
-              onClick={handleClear}
-              title="Clear board"
-            >🗑️</Button>
-          )}
+        {/* Undo */}
+        <Button size="icon" variant="outline" onClick={handleUndo} title="Undo (Ctrl+Z)">↩️</Button>
 
-          <Button
-            size="icon" variant="outline"
-            onClick={toggleTheme}
-            title="Toggle theme"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </Button>
-        </div>
+        {/* Export */}
+        <Button size="icon" variant="outline" onClick={handleExport} title="Export PNG">📥</Button>
+
+        {isHost && (
+          <Button size="icon" variant="destructive" onClick={handleClear} title="Clear board">🗑️</Button>
+        )}
+
+        {/* Theme */}
+        <Button size="icon" variant="outline" onClick={toggleTheme} title="Toggle theme">
+          {theme === "dark" ? "☀️" : "🌙"}
+        </Button>
       </div>
 
-      {/* Mobile toolbar — bottom strip */}
-      <div className="
-        md:hidden fixed bottom-0 left-0 right-0
-        flex items-center justify-around
-        bg-background border-t px-2 py-2 z-40
-      ">
-        <button
-          onClick={() => handleToolSelect("draw")}
-          className={`text-xl p-2 rounded-lg ${activeTool === "draw" ? "bg-primary/20" : ""}`}
-        >✏️</button>
-
-        <button
-          onClick={() => handleToolSelect("erase")}
-          className={`text-xl p-2 rounded-lg ${activeTool === "erase" ? "bg-primary/20" : ""}`}
-        >🧹</button>
-
-        <input
-          type="color"
-          value={activeColor}
-          onChange={(e) => handleColorChange(e.target.value)}
-          className="w-8 h-8 rounded cursor-pointer"
-        />
-
-        <button onClick={handleUndo} className="text-xl p-2 rounded-lg">↩️</button>
-
-        <button
-          onClick={() => setChatOpen((p) => !p)}
-          className="text-xl p-2 rounded-lg"
-        >💬</button>
-
-        <button onClick={handleLeave} className="text-xl p-2 rounded-lg">🚪</button>
-      </div>
-
-      {/* ── Canvas ──────────────────────────────────────────── */}
+      {/* ── Canvas Area ──────────────────────────────────────── */}
       <div className="flex-1 relative overflow-hidden">
         {!connected && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
-            <p className="text-muted-foreground animate-pulse">
-              Connecting to room...
-            </p>
+            <p className="text-muted-foreground animate-pulse">Connecting to room...</p>
           </div>
         )}
 
-        <canvas
-          ref={canvasRef}
-          width={window.innerWidth - (chatOpen ? 350 : 86)}
-          height={window.innerHeight}
-          className="bg-white cursor-crosshair block"
-        />
+        {/* Main canvas */}
+        <canvas ref={canvasRef}
+          width={canvasWidth} height={canvasHeight}
+          className="bg-white cursor-crosshair block absolute top-0 left-0" />
+
+        {/* Preview canvas overlay */}
+        <canvas ref={previewCanvasRef}
+          width={canvasWidth} height={canvasHeight}
+          className="absolute top-0 left-0 pointer-events-none" />
+
+        {/* Sticky Notes */}
+        {stickyNotes.map((note) => (
+          <div key={note.id}
+            className="absolute w-48 min-h-24 rounded-lg shadow-lg p-3 cursor-move z-20 group"
+            style={{ left: note.x, top: note.y, backgroundColor: note.color }}
+            onMouseDown={(e) => handleStickyMouseDown(e, note)}
+          >
+            <p className="text-sm text-gray-800 whitespace-pre-wrap break-words select-none">
+              {note.text}
+            </p>
+            <p className="text-xs text-gray-500 mt-2">{note.username}</p>
+            <button
+              onClick={() => handleDeleteSticky(note.id)}
+              className="absolute top-1 right-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+            >✕</button>
+          </div>
+        ))}
+
+        {/* Sticky note form */}
+        <AnimatePresence>
+          {showStickyForm && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 bg-background border rounded-xl shadow-xl p-4 z-30 w-72"
+            >
+              <p className="text-sm font-semibold mb-2">Add sticky note</p>
+              <textarea
+                value={stickyText}
+                onChange={(e) => setStickyText(e.target.value)}
+                placeholder="Type your note..."
+                className="w-full text-sm border rounded p-2 h-20 resize-none bg-background outline-none focus:ring-1 ring-primary"
+                autoFocus
+              />
+              <div className="flex gap-1 my-2 flex-wrap">
+                {STICKY_COLORS.map((c) => (
+                  <button key={c}
+                    onClick={() => setStickyColor(c)}
+                    className={`w-6 h-6 rounded-full border-2 ${stickyColor === c ? "border-gray-800 scale-110" : "border-transparent"}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button size="sm" variant="outline" onClick={() => setShowStickyForm(false)}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleAddSticky}>Add</Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Reaction bar */}
-        <div className="
-          absolute bottom-16 md:bottom-4
-          left-1/2 -translate-x-1/2
-          flex gap-1 bg-background/90 backdrop-blur
-          border rounded-full px-3 py-1.5 shadow-lg
-        ">
+        <div className="absolute bottom-16 md:bottom-4 left-1/2 -translate-x-1/2 flex gap-1 bg-background/90 backdrop-blur border rounded-full px-3 py-1.5 shadow-lg z-10">
           {REACTIONS.map((emoji) => (
-            <button
-              key={emoji}
-              onClick={() => handleReaction(emoji)}
-              className="text-xl hover:scale-125 transition-transform active:scale-95"
-            >{emoji}</button>
+            <button key={emoji} onClick={() => handleReaction(emoji)}
+              className="text-xl hover:scale-125 transition-transform active:scale-95">
+              {emoji}
+            </button>
           ))}
           <div className="w-px bg-border mx-1" />
-          <button
-            onClick={handleRaiseHand}
-            className={`text-xl hover:scale-125 transition-transform ${myHandRaised ? "animate-bounce" : ""}`}
-            title="Raise hand"
-          >🖐</button>
+          <button onClick={handleRaiseHand}
+            className={`text-xl hover:scale-125 transition-transform ${myHandRaised ? "animate-bounce" : ""}`}>
+            🖐
+          </button>
         </div>
 
-        {/* Keyboard shortcuts hint */}
-        <div className="
-          hidden md:block
-          absolute top-3 left-3
-          text-xs text-muted-foreground bg-background/80
-          backdrop-blur px-2 py-1 rounded-lg border
-        ">
-          D=Draw · E=Erase · T=Chat · C=Toggle panel · Ctrl+Z=Undo
+        {/* Shortcuts hint */}
+        <div className="hidden md:block absolute top-3 left-3 text-xs text-muted-foreground bg-background/80 backdrop-blur px-2 py-1 rounded-lg border">
+          D=Draw · E=Erase · S=Shape · T=Chat · C=Panel · Ctrl+Z=Undo
         </div>
       </div>
 
-      {/* ── Right Panel ─────────────────────────────────────── */}
-      <div className={`
-        border-l flex flex-col transition-all duration-300 shrink-0
-        fixed md:relative right-0 top-0 h-full bg-background z-30
-        ${chatOpen ? "w-64" : "w-0 overflow-hidden"}
-      `}>
+      {/* ── Right Panel ──────────────────────────────────────── */}
+      <div className={`border-l flex flex-col transition-all duration-300 shrink-0 fixed md:relative right-0 top-0 h-full bg-background z-30 ${chatOpen ? "w-64" : "w-0 overflow-hidden"}`}>
+
         {/* Users */}
         <div className="p-3 border-b shrink-0">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-semibold text-muted-foreground">
-              ONLINE — {users.length}
-            </p>
-            {isLocked && (
-              <span className="text-xs text-yellow-600 font-medium">🔒</span>
-            )}
+            <p className="text-xs font-semibold text-muted-foreground">ONLINE — {users.length}</p>
+            {isLocked && <span className="text-xs text-yellow-600">🔒</span>}
           </div>
-
           {users.map((u) => (
             <div key={u.socketId} className="flex items-center gap-2 py-1 group">
               <div className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
-              <span className="text-sm flex-1 truncate">
-                {u.username}{u.raisedHand && " 🖐"}
-              </span>
+              <span className="text-sm flex-1 truncate">{u.username}{u.raisedHand && " 🖐"}</span>
               {u.role === "host" && (
-                <span className="text-xs bg-primary text-primary-foreground px-1 rounded">
-                  host
-                </span>
+                <span className="text-xs bg-primary text-primary-foreground px-1 rounded">host</span>
               )}
               {isHost && u.userId?.toString() !== user?._id?.toString() && (
-                <button
-                  onClick={() => handleKick(u.userId, u.username)}
-                  className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                >✕</button>
+                <button onClick={() => handleKick(u.userId, u.username)}
+                  className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity">✕</button>
               )}
             </div>
           ))}
-
           <div className="mt-3 space-y-1">
-            <button
-              onClick={copyRoomId}
-              className="w-full text-left text-xs text-muted-foreground hover:text-foreground font-mono bg-muted px-2 py-1 rounded flex items-center justify-between"
-            >
-              <span>{roomId}</span>
-              <span>📋</span>
+            <button onClick={copyRoomId}
+              className="w-full text-left text-xs text-muted-foreground hover:text-foreground font-mono bg-muted px-2 py-1 rounded flex items-center justify-between">
+              <span>{roomId}</span><span>📋</span>
             </button>
-            <button
-              onClick={copyInviteLink}
-              className="w-full text-xs text-primary hover:underline text-left"
-            >
+            <button onClick={copyInviteLink}
+              className="w-full text-xs text-primary hover:underline text-left">
               🔗 Copy invite link
             </button>
           </div>
@@ -601,21 +680,11 @@ export default function RoomPage() {
         {/* Host Controls */}
         {isHost && (
           <div className="p-3 border-b shrink-0 flex flex-col gap-1">
-            <p className="text-xs font-semibold text-muted-foreground mb-1">
-              HOST CONTROLS
-            </p>
-            <Button
-              size="sm" variant="outline"
-              className="justify-start text-xs"
-              onClick={handleToggleLock}
-            >
+            <p className="text-xs font-semibold text-muted-foreground mb-1">HOST CONTROLS</p>
+            <Button size="sm" variant="outline" className="justify-start text-xs" onClick={handleToggleLock}>
               {isLocked ? "🔓 Unlock Room" : "🔒 Lock Room"}
             </Button>
-            <Button
-              size="sm" variant="destructive"
-              className="justify-start text-xs"
-              onClick={handleEndRoom}
-            >
+            <Button size="sm" variant="destructive" className="justify-start text-xs" onClick={handleEndRoom}>
               ⏹ End Session
             </Button>
           </div>
@@ -623,21 +692,17 @@ export default function RoomPage() {
 
         {/* Leave */}
         <div className="p-3 border-b shrink-0">
-          <Button
-            size="sm" variant="outline"
+          <Button size="sm" variant="outline"
             className="w-full justify-start text-xs text-destructive border-destructive hover:bg-destructive hover:text-white"
-            onClick={handleLeave}
-          >
+            onClick={handleLeave}>
             🚪 Leave Room
           </Button>
         </div>
 
-        {/* Chat messages */}
+        {/* Chat */}
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2 min-h-0">
           {chat.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center mt-4">
-              No messages yet
-            </p>
+            <p className="text-xs text-muted-foreground text-center mt-4">No messages yet</p>
           ) : (
             chat.map((msg, i) => (
               <div key={i} className="text-sm">
@@ -656,9 +721,7 @@ export default function RoomPage() {
 
         {/* Chat input */}
         <div className="p-2 border-t flex gap-1 shrink-0">
-          <input
-            ref={messageInputRef}
-            value={message}
+          <input ref={messageInputRef} value={message}
             onChange={handleTyping}
             onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
             placeholder="Message... (T)"
@@ -668,19 +731,30 @@ export default function RoomPage() {
         </div>
       </div>
 
-      {/* Toggle panel button */}
+      {/* Toggle panel */}
       <button
-        onClick={() => setChatOpen((prev) => !prev)}
-        className="
-          hidden md:block
-          absolute top-1/2 -translate-y-1/2
-          bg-muted border rounded-l-lg px-1 py-3
-          text-xs hover:bg-accent transition-colors z-20
-        "
+        onClick={() => setChatOpen((p) => !p)}
+        className="hidden md:block absolute top-1/2 -translate-y-1/2 bg-muted border rounded-l-lg px-1 py-3 text-xs hover:bg-accent transition-colors z-20"
         style={{ right: chatOpen ? "256px" : "0px" }}
       >
         {chatOpen ? "›" : "‹"}
       </button>
+
+      {/* Mobile toolbar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 flex items-center justify-around bg-background border-t px-2 py-2 z-40">
+        <button onClick={() => handleToolSelect("draw")}
+          className={`text-xl p-2 rounded-lg ${activeTool === "draw" ? "bg-primary/20" : ""}`}>✏️</button>
+        <button onClick={() => handleToolSelect("erase")}
+          className={`text-xl p-2 rounded-lg ${activeTool === "erase" ? "bg-primary/20" : ""}`}>🧹</button>
+        <button onClick={() => handleToolSelect("shape")}
+          className={`text-xl p-2 rounded-lg ${activeTool === "shape" ? "bg-primary/20" : ""}`}>⬜</button>
+        <input type="color" value={activeColor}
+          onChange={(e) => handleColorChange(e.target.value)}
+          className="w-8 h-8 rounded cursor-pointer" />
+        <button onClick={handleUndo} className="text-xl p-2 rounded-lg">↩️</button>
+        <button onClick={() => setChatOpen((p) => !p)} className="text-xl p-2 rounded-lg">💬</button>
+        <button onClick={handleLeave} className="text-xl p-2 rounded-lg">🚪</button>
+      </div>
     </div>
   );
 }

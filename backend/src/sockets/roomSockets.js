@@ -13,11 +13,17 @@ const startBatchSave = (io, roomId, roomStates) => {
     try {
       await Room.findOneAndUpdate(
         { roomId },
-        { strokes: state.strokes, chat: state.chat }
+        {
+          strokes: state.strokes,
+          chat: state.chat,
+          stickyNotes: state.stickyNotes || [], // ADD THIS
+        },
       );
       state.unsavedChanges = false;
       state.lastSavedAt = Date.now();
-      console.log(`[Batch Save] Room ${roomId} saved. Strokes: ${state.strokes.length}`);
+      console.log(
+        `[Batch Save] Room ${roomId} saved. Strokes: ${state.strokes.length}`,
+      );
     } catch (err) {
       console.error(`[Batch Save] Failed for room ${roomId}:`, err.message);
     }
@@ -32,7 +38,6 @@ const stopBatchSave = (roomId) => {
 };
 
 export const registerRoomSocket = (io, socket, roomStates) => {
-
   // JOIN ROOM
   socket.on("join-room", async ({ roomId }) => {
     try {
@@ -40,32 +45,40 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
       const room = await Room.findOne({ roomId });
       if (!room) return socket.emit("error", { message: "Room not found" });
-      if (room.isEnded) return socket.emit("error", { message: "This room has ended" });
+      if (room.isEnded)
+        return socket.emit("error", { message: "This room has ended" });
       if (room.isLocked) {
         const isMember = room.participants.find(
-          (p) => p.userId.toString() === socket.user._id.toString()
+          (p) => p.userId.toString() === socket.user._id.toString(),
         );
-        if (!isMember) return socket.emit("error", { message: "Room is locked by the host" });
+        if (!isMember)
+          return socket.emit("error", {
+            message: "Room is locked by the host",
+          });
       }
 
       const isMember = room.participants.find(
-        (p) => p.userId.toString() === socket.user._id.toString()
+        (p) => p.userId.toString() === socket.user._id.toString(),
       );
-      if (!isMember) return socket.emit("error", { message: "You are not a member of this room. Join from dashboard first." });
+      if (!isMember)
+        return socket.emit("error", {
+          message:
+            "You are not a member of this room. Join from dashboard first.",
+        });
 
       if (!roomStates[roomId]) {
         roomStates[roomId] = {
           strokes: room.strokes || [],
           chat: room.chat || [],
+          stickyNotes: room.stickyNotes || [], // ADD THIS
           users: [],
           unsavedChanges: false,
           lastSavedAt: Date.now(),
         };
-        console.log(`[Socket] Room ${roomId} loaded into memory`);
       }
 
       const alreadyPresent = roomStates[roomId].users.find(
-        (u) => u.userId.toString() === socket.user._id.toString()
+        (u) => u.userId.toString() === socket.user._id.toString(),
       );
       if (!alreadyPresent) {
         roomStates[roomId].users.push({
@@ -84,6 +97,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
       socket.emit("room-state", {
         strokes: roomStates[roomId].strokes,
         chat: roomStates[roomId].chat,
+        stickyNotes: roomStates[roomId].stickyNotes || [], // ADD THIS
       });
 
       io.to(roomId).emit("presence-update", {
@@ -96,7 +110,9 @@ export const registerRoomSocket = (io, socket, roomStates) => {
       });
 
       startBatchSave(io, roomId, roomStates);
-      console.log(`[Socket] Room ${roomId} users: ${roomStates[roomId].users.length}`);
+      console.log(
+        `[Socket] Room ${roomId} users: ${roomStates[roomId].users.length}`,
+      );
     } catch (err) {
       console.error("[Socket] join-room error:", err.message);
       socket.emit("error", { message: "Failed to join room" });
@@ -151,7 +167,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
     const room = await Room.findOne({ roomId });
     const participant = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
+      (p) => p.userId.toString() === socket.user._id.toString(),
     );
 
     if (participant?.role !== "host") {
@@ -180,13 +196,62 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     io.to(roomId).emit("receive-message", { message: chatMessage });
   });
 
+  // ADD STICKY NOTE
+  socket.on("add-sticky", ({ roomId, note }) => {
+    if (!roomStates[roomId]) return;
+
+    const fullNote = {
+      ...note,
+      userId: socket.user._id,
+      username: socket.user.username,
+    };
+
+    roomStates[roomId].stickyNotes = roomStates[roomId].stickyNotes || [];
+    roomStates[roomId].stickyNotes.push(fullNote);
+    roomStates[roomId].unsavedChanges = true;
+
+    io.to(roomId).emit("receive-sticky", { note: fullNote });
+    console.log(`[Socket] Sticky note added in ${roomId}`);
+  });
+
+  // UPDATE STICKY NOTE (move or edit)
+  socket.on("update-sticky", ({ roomId, noteId, updates }) => {
+    if (!roomStates[roomId]) return;
+
+    const notes = roomStates[roomId].stickyNotes || [];
+    const idx = notes.findIndex((n) => n.id === noteId);
+    if (idx !== -1) {
+      roomStates[roomId].stickyNotes[idx] = {
+        ...notes[idx],
+        ...updates,
+      };
+      roomStates[roomId].unsavedChanges = true;
+      socket.to(roomId).emit("sticky-updated", { noteId, updates });
+    }
+  });
+
+  // DELETE STICKY NOTE
+  socket.on("delete-sticky", ({ roomId, noteId }) => {
+    if (!roomStates[roomId]) return;
+
+    roomStates[roomId].stickyNotes = (
+      roomStates[roomId].stickyNotes || []
+    ).filter((n) => n.id !== noteId);
+    roomStates[roomId].unsavedChanges = true;
+
+    io.to(roomId).emit("sticky-deleted", { noteId });
+    console.log(`[Socket] Sticky note deleted in ${roomId}`);
+  });
+
   // TYPING INDICATOR
   socket.on("typing-start", ({ roomId }) => {
     socket.to(roomId).emit("user-typing", { username: socket.user.username });
   });
 
   socket.on("typing-stop", ({ roomId }) => {
-    socket.to(roomId).emit("user-stopped-typing", { username: socket.user.username });
+    socket
+      .to(roomId)
+      .emit("user-stopped-typing", { username: socket.user.username });
   });
 
   // RAISE HAND
@@ -194,7 +259,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (!roomStates[roomId]) return;
 
     const userInRoom = roomStates[roomId].users.find(
-      (u) => u.userId.toString() === socket.user._id.toString()
+      (u) => u.userId.toString() === socket.user._id.toString(),
     );
 
     if (userInRoom) {
@@ -204,8 +269,12 @@ export const registerRoomSocket = (io, socket, roomStates) => {
         username: socket.user.username,
         raisedHand: userInRoom.raisedHand,
       });
-      io.to(roomId).emit("presence-update", { users: roomStates[roomId].users });
-      console.log(`[Socket] ${socket.user.username} raised hand: ${userInRoom.raisedHand}`);
+      io.to(roomId).emit("presence-update", {
+        users: roomStates[roomId].users,
+      });
+      console.log(
+        `[Socket] ${socket.user.username} raised hand: ${userInRoom.raisedHand}`,
+      );
     }
   });
 
@@ -226,15 +295,17 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
     const room = await Room.findOne({ roomId });
     const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
+      (p) => p.userId.toString() === socket.user._id.toString(),
     );
 
     if (requester?.role !== "host") {
-      return socket.emit("error", { message: "Only host can kick participants" });
+      return socket.emit("error", {
+        message: "Only host can kick participants",
+      });
     }
 
     const targetUser = state.users.find(
-      (u) => u.userId.toString() === targetUserId
+      (u) => u.userId.toString() === targetUserId,
     );
 
     if (targetUser) {
@@ -244,11 +315,11 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
       await Room.findOneAndUpdate(
         { roomId },
-        { $pull: { participants: { userId: targetUserId } } }
+        { $pull: { participants: { userId: targetUserId } } },
       );
 
       state.users = state.users.filter(
-        (u) => u.userId.toString() !== targetUserId
+        (u) => u.userId.toString() !== targetUserId,
       );
 
       io.to(roomId).emit("presence-update", { users: state.users });
@@ -260,7 +331,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
   socket.on("toggle-lock", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
     const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
+      (p) => p.userId.toString() === socket.user._id.toString(),
     );
 
     if (requester?.role !== "host") {
@@ -278,7 +349,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
   socket.on("end-room", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
     const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
+      (p) => p.userId.toString() === socket.user._id.toString(),
     );
 
     if (requester?.role !== "host") {
@@ -292,7 +363,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
           strokes: roomStates[roomId].strokes,
           chat: roomStates[roomId].chat,
           isEnded: true,
-        }
+        },
       );
     }
 
@@ -321,7 +392,7 @@ const handleLeave = async (io, socket, roomId, roomStates) => {
   if (!roomStates[roomId]) return;
 
   roomStates[roomId].users = roomStates[roomId].users.filter(
-    (u) => u.socketId !== socket.id
+    (u) => u.socketId !== socket.id,
   );
 
   socket.leave(roomId);
@@ -344,7 +415,7 @@ const handleLeave = async (io, socket, roomId, roomStates) => {
         {
           strokes: roomStates[roomId].strokes,
           chat: roomStates[roomId].chat,
-        }
+        },
       );
     } catch (err) {
       console.error(`[Socket] Final save failed:`, err.message);
