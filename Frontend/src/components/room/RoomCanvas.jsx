@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { GripHorizontal } from "lucide-react";
 
 export default function RoomCanvas({
-  connected, canvasRef, canvasWidth, canvasHeight, previewCanvasRef, scale, offset, floatingRef,
+  connected, canvasRef, canvasWidth, canvasHeight, previewCanvasRef, scale, offset, workspaceRef, gridRef,
   stickyNotes, textNodes, imageNodes, handleElementMouseDown,
   handleDeleteSticky, handleDeleteText, handleDeleteImage, handleUpdateText, handleUpdateImageSize,
   showStickyForm, setShowStickyForm, stickyText, setStickyText, STICKY_COLORS, stickyColor, setStickyColor, handleAddSticky,
@@ -11,7 +11,8 @@ export default function RoomCanvas({
   
   return (
     <div 
-      className="absolute inset-0 z-0 bg-[radial-gradient(#00000033_1px,transparent_1px)] dark:bg-[radial-gradient(#ffffff33_1px,transparent_1px)] [background-size:24px_24px] overflow-hidden"
+      ref={gridRef}
+      className="absolute inset-0 z-0 bg-[radial-gradient(#00000033_1px,transparent_1px)] dark:bg-[radial-gradient(#ffffff33_1px,transparent_1px)] overflow-hidden transition-none"
       onClick={(e) => { if (e.target === e.currentTarget) handleCanvasClick(e); }}
     >
       
@@ -23,17 +24,18 @@ export default function RoomCanvas({
         </div>
       )}
 
-      <canvas ref={canvasRef} width={canvasWidth} height={canvasHeight} onClick={handleCanvasClick} className="block absolute top-0 left-0 bg-transparent touch-none cursor-crosshair z-10" />
-      <canvas ref={previewCanvasRef} width={canvasWidth} height={canvasHeight} className="absolute top-0 left-0 bg-transparent pointer-events-none z-10" />
-
-      {/* Floating Elements Container connected to ZOOM/PAN logic */}
-      <div ref={floatingRef} className="absolute top-0 left-0 w-full h-full pointer-events-none z-20">
+      {/* 🔴 THE UNIFIED WORKSPACE WRAPPER 🔴 
+          Everything inside this div moves and zooms together perfectly. 
+      */}
+      <div ref={workspaceRef} className="absolute inset-0 w-full h-full pointer-events-none z-10 will-change-transform">
         
+        <canvas ref={canvasRef} width={canvasWidth} height={canvasHeight} onClick={handleCanvasClick} className="block absolute top-0 left-0 bg-transparent touch-none cursor-crosshair pointer-events-auto" />
+        <canvas ref={previewCanvasRef} width={canvasWidth} height={canvasHeight} className="absolute top-0 left-0 bg-transparent pointer-events-none" />
+
         {stickyNotes.map((note) => (
           <div key={note.id} className="absolute w-56 min-h-32 border-2 border-black p-4 cursor-move group flex flex-col justify-between shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] transition-shadow pointer-events-auto" style={{ left: note.x, top: note.y, backgroundColor: note.color }} onMouseDown={(e) => handleElementMouseDown(e, note, "sticky")}>
             <p className="text-sm text-black font-bold whitespace-pre-wrap break-words select-none leading-snug">{note.text}</p>
             <p className="text-[10px] font-black uppercase tracking-widest text-black/60 mt-4 border-t border-black/20 pt-1">@{note.username}</p>
-            {/* Switched to onClick to fix delete bug */}
             <button onClick={(e) => { e.stopPropagation(); handleDeleteSticky(note.id); }} className="absolute top-2 right-2 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
           </div>
         ))}
@@ -50,10 +52,7 @@ export default function RoomCanvas({
                 className="bg-transparent outline-none font-sans font-black tracking-wide border-b-2 border-dashed border-foreground/50"
                 style={{ color: node.color, fontSize: `${node.fontSize}px`, minWidth: "100px" }}
                 onMouseDown={(e) => e.stopPropagation()} 
-                onKeyDown={(e) => { 
-                  e.stopPropagation(); 
-                  if (e.key === "Enter" || e.key === "Escape") { setEditingTextId(null); if (!node.text.trim()) handleDeleteText(node.id); }
-                }}
+                onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") { setEditingTextId(null); if (!node.text.trim()) handleDeleteText(node.id); } }}
                 onBlur={() => { setEditingTextId(null); if (!node.text.trim()) handleDeleteText(node.id); }}
               />
             ) : (
@@ -62,7 +61,6 @@ export default function RoomCanvas({
               </span>
             )}
             
-            {/* Switched to onClick */}
             <button onClick={(e) => { e.stopPropagation(); handleDeleteText(node.id); }} className="absolute -top-3 -right-3 w-5 h-5 border-2 border-black bg-white text-black text-xs font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
           </div>
         ))}
@@ -72,15 +70,8 @@ export default function RoomCanvas({
             <div className="w-full h-full cursor-move" onMouseDown={(e) => handleElementMouseDown(e, node, "image")}>
               <img src={node.src} className="w-full h-full object-contain pointer-events-none" alt="canvas element" />
             </div>
-
-            {/* Switched to onClick */}
             <button onClick={(e) => { e.stopPropagation(); handleDeleteImage(node.id); }} className="absolute -top-3 -right-3 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
-            
-            <div 
-              className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize opacity-0 group-hover:opacity-100 bg-foreground" 
-              style={{ resize: 'both', overflow: 'hidden', clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }}
-              onMouseUp={(e) => { handleUpdateImageSize(node.id, e.target.offsetWidth, e.target.offsetHeight); }}
-            />
+            <div className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize opacity-0 group-hover:opacity-100 bg-foreground" style={{ resize: 'both', overflow: 'hidden', clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }} onMouseUp={(e) => { handleUpdateImageSize(node.id, e.target.offsetWidth, e.target.offsetHeight); }} />
           </div>
         ))}
 

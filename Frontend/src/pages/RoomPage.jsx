@@ -37,6 +37,9 @@ export default function RoomPage() {
   const [activeTab, setActiveTab] = useState("chat");
   const [activityLog, setActivityLog] = useState([]);
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", action: null });
+  
+  // NEW: Shortcut Modal
+  const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [activeTool, setActiveTool] = useState("draw");
   const [activeShape, setActiveShape] = useState("rect");
@@ -44,7 +47,6 @@ export default function RoomPage() {
   const [activeSize, setActiveSize] = useState(4);
   const [showShapeMenu, setShowShapeMenu] = useState(false);
 
-  // Floating Elements State
   const [stickyNotes, setStickyNotes] = useState([]);
   const [textNodes, setTextNodes] = useState([]);
   const [imageNodes, setImageNodes] = useState([]);
@@ -66,8 +68,9 @@ export default function RoomPage() {
   const reactionIdRef = useRef(0);
   const messageInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const importInputRef = useRef(null); // Reference for importing JSON
 
-  const { canvasRef, previewCanvasRef, floatingRef, replayStrokes, drawStroke, setTool, setColor, setSize, setShapeType, resetZoom, scale, offset } = useCanvas(socket, roomId);
+  const { canvasRef, previewCanvasRef, workspaceRef, gridRef, strokesRef, replayStrokes, drawStroke, setTool, setColor, setSize, setShapeType, resetZoom, scale, offset } = useCanvas(socket, roomId);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   useEffect(() => {
@@ -82,7 +85,8 @@ export default function RoomPage() {
     if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
     if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); handleUndo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key === "0") { e.preventDefault(); resetZoom(); return; }
-    if (e.key === "Escape") { messageInputRef.current?.blur(); setShowShapeMenu(false); setShowStickyForm(false); setConfirmModal({isOpen: false}); setEditingTextId(null); return; }
+    if (e.key === "?" || e.key === "/") { e.preventDefault(); setShowShortcuts((p) => !p); return; }
+    if (e.key === "Escape") { messageInputRef.current?.blur(); setShowShapeMenu(false); setShowStickyForm(false); setConfirmModal({isOpen: false}); setEditingTextId(null); setShowShortcuts(false); return; }
     
     if (e.key === "d" || e.key === "D") { handleToolSelect("draw"); return; }
     if (e.key === "e" || e.key === "E") { handleToolSelect("erase"); return; }
@@ -124,7 +128,6 @@ export default function RoomPage() {
     socket.on("user-typing", ({ username }) => setTypingUsers((prev) => (prev.includes(username) ? prev : [...prev, username])));
     socket.on("user-stopped-typing", ({ username }) => setTypingUsers((prev) => prev.filter((u) => u !== username)));
     
-    // Nodes Sync
     socket.on("receive-sticky", ({ note }) => setStickyNotes((prev) => [...prev, note]));
     socket.on("sticky-updated", ({ noteId, updates }) => setStickyNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, ...updates } : n))));
     socket.on("sticky-deleted", ({ noteId }) => setStickyNotes((prev) => prev.filter((n) => n.id !== noteId)));
@@ -138,7 +141,6 @@ export default function RoomPage() {
     socket.on("image-node-deleted", ({ nodeId }) => setImageNodes((prev) => prev.filter((n) => n.id !== nodeId)));
 
     socket.on("activity-update", ({ entry }) => setActivityLog((prev) => [...prev, entry]));
-    socket.on("user-left", ({ username }) => { setCursors((prev) => { const c = { ...prev }; delete c[username]; return c; }); });
     socket.on("kicked", ({ message }) => { toast({ title: message, variant: "destructive" }); setTimeout(() => navigate("/dashboard"), 1500); });
     socket.on("room-ended", ({ message }) => { toast({ title: message, variant: "destructive" }); setTimeout(() => navigate("/dashboard"), 1500); });
     socket.on("room-locked", ({ isLocked }) => setIsLocked(isLocked));
@@ -146,7 +148,7 @@ export default function RoomPage() {
 
     return () => {
       socket.emit("leave-room", { roomId });
-      ["room-state", "receive-stroke", "stroke-undo", "board-cleared", "presence-update", "receive-message", "cursor-update", "user-typing", "user-stopped-typing", "receive-sticky", "sticky-updated", "sticky-deleted", "receive-text-node", "text-node-updated", "text-node-deleted", "receive-image-node", "image-node-updated", "image-node-deleted", "activity-update", "user-joined", "user-left", "kicked", "room-ended", "room-locked", "error"].forEach((ev) => socket.off(ev));
+      ["room-state", "receive-stroke", "stroke-undo", "board-cleared", "presence-update", "receive-message", "cursor-update", "user-typing", "user-stopped-typing", "receive-sticky", "sticky-updated", "sticky-deleted", "receive-text-node", "text-node-updated", "text-node-deleted", "receive-image-node", "image-node-updated", "image-node-deleted", "activity-update", "kicked", "room-ended", "room-locked", "error"].forEach((ev) => socket.off(ev));
     };
   }, [socket, roomId, isReady]);
 
@@ -179,6 +181,38 @@ export default function RoomPage() {
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); toast({ title: "Room ID copied!" }); };
   const copyInviteLink = () => { navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`); toast({ title: "Invite link copied!" }); };
 
+  // --- EXPORT & IMPORT (Feature 1) ---
+  const handleExportJSON = () => {
+    const data = { strokes: strokesRef.current, stickyNotes, textNodes, imageNodes };
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `penspace-${roomId}.json`;
+    link.click();
+    toast({ title: "Board exported as JSON" });
+  };
+
+  const handleImportJSON = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (isHost) {
+          socket.emit("import-board", { roomId, data });
+          toast({ title: "Board imported successfully!" });
+        } else {
+          toast({ title: "Only the host can import boards.", variant: "destructive" });
+        }
+      } catch (err) {
+        toast({ title: "Invalid file format", variant: "destructive" });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -191,8 +225,6 @@ export default function RoomPage() {
         const maxW = 400; const maxH = 400;
         if (w > maxW) { h = (h * maxW) / w; w = maxW; }
         if (h > maxH) { w = (w * maxH) / h; h = maxH; }
-        
-        // Calculate center based on screen and zoom offset
         const x = (window.innerWidth / 2 - offset.current.x) / scale.current - w/2;
         const y = (window.innerHeight / 2 - offset.current.y) / scale.current - h/2;
         
@@ -203,7 +235,7 @@ export default function RoomPage() {
       img.src = imageData;
     };
     reader.readAsDataURL(file);
-    e.target.value = ""; // Reset input
+    e.target.value = ""; 
   };
 
   const handleAddSticky = () => {
@@ -226,10 +258,9 @@ export default function RoomPage() {
     socket.emit("add-text-node", { roomId, node: textNode });
     
     setEditingTextId(textNode.id); 
-    handleToolSelect("draw"); // Revert to pen immediately to avoid spam clicks
+    handleToolSelect("draw");
   };
 
-  // Optimistic Deletions
   const handleDeleteSticky = (noteId) => { setStickyNotes(prev => prev.filter(n => n.id !== noteId)); socket.emit("delete-sticky", { roomId, noteId }); };
   const handleDeleteText = (nodeId) => { setTextNodes(prev => prev.filter(n => n.id !== nodeId)); socket.emit("delete-text-node", { roomId, nodeId }); };
   const handleDeleteImage = (nodeId) => { setImageNodes(prev => prev.filter(n => n.id !== nodeId)); socket.emit("delete-image-node", { roomId, nodeId }); };
@@ -281,18 +312,12 @@ export default function RoomPage() {
     return () => { window.removeEventListener("mousemove", handleElementMouseMove); window.removeEventListener("mouseup", handleElementMouseUp); };
   }, [draggingElement, handleElementMouseMove, handleElementMouseUp]);
 
-  const handleExport = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const link = document.createElement("a"); link.download = `penspace-${roomId}.png`; link.href = canvas.toDataURL("image/png"); link.click();
-  };
-
   return (
     <div className="w-screen h-screen bg-background text-foreground overflow-hidden relative select-none font-sans selection:bg-[#fde047] selection:text-black">
       
       <RoomCanvas
         connected={connected} canvasRef={canvasRef} canvasWidth={canvasDimensions.width} canvasHeight={canvasDimensions.height} previewCanvasRef={previewCanvasRef}
-        floatingRef={floatingRef} scale={scale} offset={offset}
+        workspaceRef={workspaceRef} gridRef={gridRef} scale={scale} offset={offset}
         stickyNotes={stickyNotes} textNodes={textNodes} imageNodes={imageNodes}
         editingTextId={editingTextId} setEditingTextId={setEditingTextId}
         handleElementMouseDown={handleElementMouseDown}
@@ -305,11 +330,14 @@ export default function RoomPage() {
 
       <RoomOverlay floatingMessages={floatingMessages} cursors={cursors} />
 
+      {/* Hidden input for importing JSON */}
+      <input type="file" ref={importInputRef} accept=".json" style={{ display: "none" }} onChange={handleImportJSON} />
+
       <RoomToolbar
         activeTool={activeTool} handleToolSelect={handleToolSelect} activeShape={activeShape}
         showShapeMenu={showShapeMenu} setShowShapeMenu={setShowShapeMenu} handleShapeSelect={handleShapeSelect}
         activeColor={activeColor} handleColorChange={handleColorChange} activeSize={activeSize} handleSizeChange={handleSizeChange}
-        handleUndo={handleUndo} resetZoom={resetZoom} handleExport={handleExport} isHost={isHost} handleClear={handleClear}
+        handleUndo={handleUndo} resetZoom={resetZoom} handleExport={handleExportJSON} isHost={isHost} handleClear={handleClear}
         theme={theme} toggleTheme={toggleTheme} fileInputRef={fileInputRef} handleImageUpload={handleImageUpload}
         showStickyForm={showStickyForm} setShowStickyForm={setShowStickyForm} SHAPES={SHAPES}
       />
@@ -320,15 +348,21 @@ export default function RoomPage() {
         handleToggleLock={handleToggleLock} handleEndRoom={handleEndRoom} handleLeave={handleLeave} activeTab={activeTab}
         setActiveTab={setActiveTab} chat={chat} typingUsers={typingUsers} chatBottomRef={chatBottomRef} messageInputRef={messageInputRef}
         message={message} handleTyping={handleTyping} handleSendMessage={handleSendMessage} activityLog={activityLog}
+        handleExportJSON={handleExportJSON} importInputRef={importInputRef}
       />
 
+      {/* Toggles sidebar and shows shortcut reminder */}
       {!chatOpen && (
-        <button onClick={() => setChatOpen(true)} className="fixed top-6 right-6 bg-background border-2 border-foreground rounded-xl p-3 shadow-[4px_4px_0px_0px_currentColor] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_currentColor] transition-all z-40 text-foreground flex items-center justify-center gap-2">
-          <PanelRightOpen strokeWidth={2.5} />
-          <span className="font-black uppercase tracking-widest text-xs hidden sm:block">Menu</span>
-        </button>
+        <div className="fixed top-6 right-6 flex items-center gap-3 z-40">
+          <button onClick={() => setShowShortcuts(true)} className="bg-background border-2 border-foreground rounded-full w-10 h-10 shadow-[4px_4px_0px_0px_currentColor] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_currentColor] transition-all font-black text-lg">?</button>
+          <button onClick={() => setChatOpen(true)} className="bg-background border-2 border-foreground rounded-xl p-3 shadow-[4px_4px_0px_0px_currentColor] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_currentColor] transition-all flex items-center justify-center gap-2">
+            <PanelRightOpen strokeWidth={2.5} />
+            <span className="font-black uppercase tracking-widest text-xs hidden sm:block">Menu</span>
+          </button>
+        </div>
       )}
 
+      {/* Brutalist Modal Overlays */}
       <AnimatePresence>
         {confirmModal.isOpen && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm pointer-events-auto">
@@ -338,6 +372,28 @@ export default function RoomPage() {
               <div className="flex gap-4 mt-4">
                 <button onClick={() => setConfirmModal({isOpen: false})} className="flex-1 py-2 font-black uppercase tracking-widest border-2 border-foreground hover:bg-muted transition-colors">Cancel</button>
                 <button onClick={() => { confirmModal.action(); setConfirmModal({isOpen: false}); }} className="flex-1 py-2 font-black uppercase tracking-widest bg-[#fca5a5] text-black border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">Confirm</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {showShortcuts && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm pointer-events-auto" onClick={() => setShowShortcuts(false)}>
+            <motion.div onClick={(e) => e.stopPropagation()} initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-background border-2 border-foreground p-8 w-[400px] max-w-[90vw] shadow-[12px_12px_0px_0px_currentColor] flex flex-col gap-6">
+              <div className="flex justify-between items-center border-b-2 border-foreground pb-2">
+                <h3 className="text-xl font-black uppercase tracking-widest">Shortcuts</h3>
+                <button onClick={() => setShowShortcuts(false)} className="hover:text-red-500 font-black">✕</button>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm font-bold">
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Draw</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">D</kbd></div>
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Erase</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">E</kbd></div>
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Shape</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">S</kbd></div>
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Text</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">T</kbd></div>
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Chat</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">C</kbd></div>
+                <div className="flex justify-between border-b-2 border-dashed border-foreground/20 pb-1"><span>Menu</span> <kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">?</kbd></div>
+                <div className="flex justify-between col-span-2 border-b-2 border-dashed border-foreground/20 pb-1"><span>Undo</span> <div className="space-x-1"><kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">Ctrl</kbd><span>+</span><kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">Z</kbd></div></div>
+                <div className="flex justify-between col-span-2 border-b-2 border-dashed border-foreground/20 pb-1"><span>Reset Zoom</span> <div className="space-x-1"><kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">Ctrl</kbd><span>+</span><kbd className="bg-muted px-2 py-0.5 border-2 border-foreground rounded font-mono">0</kbd></div></div>
+                <div className="flex justify-between col-span-2 pb-1"><span>Pan</span> <span className="opacity-70 text-xs uppercase tracking-widest mt-1">Mid/Right Mouse</span></div>
               </div>
             </motion.div>
           </div>

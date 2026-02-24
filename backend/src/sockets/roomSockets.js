@@ -21,15 +21,18 @@ const logActivity = (roomStates, roomId, type, username) => {
 };
 
 const saveRoom = async (roomId, state) => {
-  await Room.findOneAndUpdate({ roomId }, {
-    strokes: state.strokes,
-    chat: state.chat,
-    stickyNotes: state.stickyNotes || [],
-    textNodes: state.textNodes || [],
-    imageNodes: state.imageNodes || [],
-    activityLog: state.activityLog || [],
-    thumbnail: state.thumbnail || null,
-  });
+  await Room.findOneAndUpdate(
+    { roomId },
+    {
+      strokes: state.strokes,
+      chat: state.chat,
+      stickyNotes: state.stickyNotes || [],
+      textNodes: state.textNodes || [],
+      imageNodes: state.imageNodes || [],
+      activityLog: state.activityLog || [],
+      thumbnail: state.thumbnail || null,
+    },
+  );
 };
 
 const startBatchSave = (roomId, roomStates) => {
@@ -48,7 +51,6 @@ const startBatchSave = (roomId, roomStates) => {
 };
 
 export const registerRoomSocket = (io, socket, roomStates) => {
-
   socket.on("join-room", async ({ roomId }) => {
     try {
       // Clear the deletion timeout if a user reconnects instantly (page reload)
@@ -60,12 +62,14 @@ export const registerRoomSocket = (io, socket, roomStates) => {
       // Use .lean() to prevent Mongoose proxy issues in memory
       const room = await Room.findOne({ roomId }).lean();
       if (!room) return socket.emit("error", { message: "Room not found" });
-      if (room.isEnded) return socket.emit("error", { message: "This room has ended" });
+      if (room.isEnded)
+        return socket.emit("error", { message: "This room has ended" });
 
       const isMember = room.participants.find(
-        (p) => p.userId.toString() === socket.user._id.toString()
+        (p) => p.userId.toString() === socket.user._id.toString(),
       );
-      if (!isMember) return socket.emit("error", { message: "Not a member of this room" });
+      if (!isMember)
+        return socket.emit("error", { message: "Not a member of this room" });
 
       if (room.isLocked && isMember.role !== "host") {
         return socket.emit("error", { message: "Room is locked" });
@@ -86,7 +90,7 @@ export const registerRoomSocket = (io, socket, roomStates) => {
       }
 
       const alreadyPresent = roomStates[roomId].users.find(
-        (u) => u.userId.toString() === socket.user._id.toString()
+        (u) => u.userId.toString() === socket.user._id.toString(),
       );
       if (!alreadyPresent) {
         roomStates[roomId].users.push({
@@ -112,8 +116,15 @@ export const registerRoomSocket = (io, socket, roomStates) => {
         activityLog: roomStates[roomId].activityLog || [],
       });
 
-      const entry = logActivity(roomStates, roomId, "joined", socket.user.username);
-      io.to(roomId).emit("presence-update", { users: roomStates[roomId].users });
+      const entry = logActivity(
+        roomStates,
+        roomId,
+        "joined",
+        socket.user.username,
+      );
+      io.to(roomId).emit("presence-update", {
+        users: roomStates[roomId].users,
+      });
       if (entry) io.to(roomId).emit("activity-update", { entry });
       socket.to(roomId).emit("user-joined", { username: socket.user.username });
 
@@ -126,7 +137,11 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("draw-stroke", ({ roomId, stroke }) => {
     if (!roomStates[roomId]) return;
-    const fullStroke = { ...stroke, userId: socket.user._id, timestamp: Date.now() };
+    const fullStroke = {
+      ...stroke,
+      userId: socket.user._id,
+      timestamp: Date.now(),
+    };
     roomStates[roomId].strokes.push(fullStroke);
     roomStates[roomId].unsavedChanges = true;
     socket.to(roomId).emit("receive-stroke", { stroke: fullStroke });
@@ -139,7 +154,14 @@ export const registerRoomSocket = (io, socket, roomStates) => {
   });
 
   socket.on("cursor-move", ({ roomId, x, y }) => {
-    socket.to(roomId).emit("cursor-update", { userId: socket.user._id, username: socket.user.username, x, y });
+    socket
+      .to(roomId)
+      .emit("cursor-update", {
+        userId: socket.user._id,
+        username: socket.user.username,
+        x,
+        y,
+      });
   });
 
   socket.on("undo", ({ roomId }) => {
@@ -155,11 +177,50 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     io.to(roomId).emit("stroke-undo", { strokes: roomStates[roomId].strokes });
   });
 
+  // ── IMPORT JSON BOARD ──────────────────────────────────
+  socket.on("import-board", async ({ roomId, data }) => {
+    if (!roomStates[roomId]) return;
+    const room = await Room.findOne({ roomId });
+    const participant = room?.participants.find(
+      (p) => p.userId.toString() === socket.user._id.toString(),
+    );
+    if (participant?.role !== "host")
+      return socket.emit("error", { message: "Only host can import" });
+
+    // Safely assign imported data (fallback to empty arrays if missing)
+    roomStates[roomId].strokes = data.strokes || [];
+    roomStates[roomId].stickyNotes = data.stickyNotes || [];
+    roomStates[roomId].textNodes = data.textNodes || [];
+    roomStates[roomId].imageNodes = data.imageNodes || [];
+    roomStates[roomId].unsavedChanges = true;
+
+    const entry = logActivity(
+      roomStates,
+      roomId,
+      "cleared",
+      `${socket.user.username} imported a file`,
+    );
+
+    // Broadcast the entirely new state to the room
+    io.to(roomId).emit("room-state", {
+      strokes: roomStates[roomId].strokes,
+      chat: roomStates[roomId].chat,
+      stickyNotes: roomStates[roomId].stickyNotes,
+      textNodes: roomStates[roomId].textNodes,
+      imageNodes: roomStates[roomId].imageNodes,
+      activityLog: roomStates[roomId].activityLog,
+    });
+    if (entry) io.to(roomId).emit("activity-update", { entry });
+  });
+
   socket.on("clear-board", async ({ roomId }) => {
     if (!roomStates[roomId]) return;
     const room = await Room.findOne({ roomId });
-    const participant = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
-    if (participant?.role !== "host") return socket.emit("error", { message: "Only host can clear" });
+    const participant = room?.participants.find(
+      (p) => p.userId.toString() === socket.user._id.toString(),
+    );
+    if (participant?.role !== "host")
+      return socket.emit("error", { message: "Only host can clear" });
 
     roomStates[roomId].strokes = [];
     roomStates[roomId].stickyNotes = [];
@@ -168,35 +229,63 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     roomStates[roomId].thumbnail = null;
     roomStates[roomId].unsavedChanges = true;
 
-    const entry = logActivity(roomStates, roomId, "cleared", socket.user.username);
+    const entry = logActivity(
+      roomStates,
+      roomId,
+      "cleared",
+      socket.user.username,
+    );
     io.to(roomId).emit("board-cleared");
     if (entry) io.to(roomId).emit("activity-update", { entry });
   });
 
   socket.on("send-message", ({ roomId, message }) => {
     if (!roomStates[roomId] || !message?.trim()) return;
-    const chatMessage = { senderId: socket.user._id, senderName: socket.user.username, message: message.trim(), timestamp: Date.now() };
+    const chatMessage = {
+      senderId: socket.user._id,
+      senderName: socket.user.username,
+      message: message.trim(),
+      timestamp: Date.now(),
+    };
     roomStates[roomId].chat.push(chatMessage);
     roomStates[roomId].unsavedChanges = true;
     io.to(roomId).emit("receive-message", { message: chatMessage });
   });
 
-  socket.on("typing-start", ({ roomId }) => socket.to(roomId).emit("user-typing", { username: socket.user.username }));
-  socket.on("typing-stop", ({ roomId }) => socket.to(roomId).emit("user-stopped-typing", { username: socket.user.username }));
+  socket.on("typing-start", ({ roomId }) =>
+    socket.to(roomId).emit("user-typing", { username: socket.user.username }),
+  );
+  socket.on("typing-stop", ({ roomId }) =>
+    socket
+      .to(roomId)
+      .emit("user-stopped-typing", { username: socket.user.username }),
+  );
 
   socket.on("raise-hand", ({ roomId }) => {
     if (!roomStates[roomId]) return;
-    const u = roomStates[roomId].users.find((u) => u.userId.toString() === socket.user._id.toString());
+    const u = roomStates[roomId].users.find(
+      (u) => u.userId.toString() === socket.user._id.toString(),
+    );
     if (u) {
       u.raisedHand = !u.raisedHand;
-      io.to(roomId).emit("hand-raised", { userId: socket.user._id, username: socket.user.username, raisedHand: u.raisedHand });
-      io.to(roomId).emit("presence-update", { users: roomStates[roomId].users });
+      io.to(roomId).emit("hand-raised", {
+        userId: socket.user._id,
+        username: socket.user.username,
+        raisedHand: u.raisedHand,
+      });
+      io.to(roomId).emit("presence-update", {
+        users: roomStates[roomId].users,
+      });
     }
   });
 
   socket.on("add-sticky", ({ roomId, note }) => {
     if (!roomStates[roomId]) return;
-    const fullNote = { ...note, userId: socket.user._id, username: socket.user.username };
+    const fullNote = {
+      ...note,
+      userId: socket.user._id,
+      username: socket.user.username,
+    };
     roomStates[roomId].stickyNotes.push(fullNote);
     roomStates[roomId].unsavedChanges = true;
     socket.to(roomId).emit("receive-sticky", { note: fullNote }); // FIXED: socket.to stops sender from duplicating
@@ -204,9 +293,14 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("update-sticky", ({ roomId, noteId, updates }) => {
     if (!roomStates[roomId]) return;
-    const idx = roomStates[roomId].stickyNotes.findIndex((n) => n.id === noteId);
+    const idx = roomStates[roomId].stickyNotes.findIndex(
+      (n) => n.id === noteId,
+    );
     if (idx !== -1) {
-      roomStates[roomId].stickyNotes[idx] = { ...roomStates[roomId].stickyNotes[idx], ...updates };
+      roomStates[roomId].stickyNotes[idx] = {
+        ...roomStates[roomId].stickyNotes[idx],
+        ...updates,
+      };
       roomStates[roomId].unsavedChanges = true;
       socket.to(roomId).emit("sticky-updated", { noteId, updates });
     }
@@ -214,14 +308,20 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("delete-sticky", ({ roomId, noteId }) => {
     if (!roomStates[roomId]) return;
-    roomStates[roomId].stickyNotes = roomStates[roomId].stickyNotes.filter((n) => n.id !== noteId);
+    roomStates[roomId].stickyNotes = roomStates[roomId].stickyNotes.filter(
+      (n) => n.id !== noteId,
+    );
     roomStates[roomId].unsavedChanges = true;
     socket.to(roomId).emit("sticky-deleted", { noteId });
   });
 
   socket.on("add-text-node", ({ roomId, node }) => {
     if (!roomStates[roomId]) return;
-    const fullNode = { ...node, userId: socket.user._id, username: socket.user.username };
+    const fullNode = {
+      ...node,
+      userId: socket.user._id,
+      username: socket.user.username,
+    };
     roomStates[roomId].textNodes = roomStates[roomId].textNodes || [];
     roomStates[roomId].textNodes.push(fullNode);
     roomStates[roomId].unsavedChanges = true;
@@ -232,7 +332,10 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (!roomStates[roomId]) return;
     const idx = roomStates[roomId].textNodes?.findIndex((n) => n.id === nodeId);
     if (idx !== -1 && idx !== undefined) {
-      roomStates[roomId].textNodes[idx] = { ...roomStates[roomId].textNodes[idx], ...updates };
+      roomStates[roomId].textNodes[idx] = {
+        ...roomStates[roomId].textNodes[idx],
+        ...updates,
+      };
       roomStates[roomId].unsavedChanges = true;
       socket.to(roomId).emit("text-node-updated", { nodeId, updates });
     }
@@ -240,14 +343,19 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("delete-text-node", ({ roomId, nodeId }) => {
     if (!roomStates[roomId]) return;
-    roomStates[roomId].textNodes = roomStates[roomId].textNodes?.filter((n) => n.id !== nodeId) || [];
+    roomStates[roomId].textNodes =
+      roomStates[roomId].textNodes?.filter((n) => n.id !== nodeId) || [];
     roomStates[roomId].unsavedChanges = true;
     socket.to(roomId).emit("text-node-deleted", { nodeId });
   });
 
   socket.on("add-image-node", ({ roomId, node }) => {
     if (!roomStates[roomId]) return;
-    const fullNode = { ...node, userId: socket.user._id, username: socket.user.username };
+    const fullNode = {
+      ...node,
+      userId: socket.user._id,
+      username: socket.user.username,
+    };
     roomStates[roomId].imageNodes = roomStates[roomId].imageNodes || [];
     roomStates[roomId].imageNodes.push(fullNode);
     roomStates[roomId].unsavedChanges = true;
@@ -256,9 +364,14 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("update-image-node", ({ roomId, nodeId, updates }) => {
     if (!roomStates[roomId]) return;
-    const idx = roomStates[roomId].imageNodes?.findIndex((n) => n.id === nodeId);
+    const idx = roomStates[roomId].imageNodes?.findIndex(
+      (n) => n.id === nodeId,
+    );
     if (idx !== -1 && idx !== undefined) {
-      roomStates[roomId].imageNodes[idx] = { ...roomStates[roomId].imageNodes[idx], ...updates };
+      roomStates[roomId].imageNodes[idx] = {
+        ...roomStates[roomId].imageNodes[idx],
+        ...updates,
+      };
       roomStates[roomId].unsavedChanges = true;
       socket.to(roomId).emit("image-node-updated", { nodeId, updates });
     }
@@ -266,7 +379,8 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("delete-image-node", ({ roomId, nodeId }) => {
     if (!roomStates[roomId]) return;
-    roomStates[roomId].imageNodes = roomStates[roomId].imageNodes?.filter((n) => n.id !== nodeId) || [];
+    roomStates[roomId].imageNodes =
+      roomStates[roomId].imageNodes?.filter((n) => n.id !== nodeId) || [];
     roomStates[roomId].unsavedChanges = true;
     socket.to(roomId).emit("image-node-deleted", { nodeId });
   });
@@ -275,15 +389,32 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     const state = roomStates[roomId];
     if (!state) return;
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
-    if (requester?.role !== "host") return socket.emit("error", { message: "Only host can kick" });
+    const requester = room?.participants.find(
+      (p) => p.userId.toString() === socket.user._id.toString(),
+    );
+    if (requester?.role !== "host")
+      return socket.emit("error", { message: "Only host can kick" });
 
-    const targetUser = state.users.find((u) => u.userId.toString() === targetUserId);
+    const targetUser = state.users.find(
+      (u) => u.userId.toString() === targetUserId,
+    );
     if (targetUser) {
-      io.to(targetUser.socketId).emit("kicked", { message: "You were removed by the host" });
-      await Room.findOneAndUpdate({ roomId }, { $pull: { participants: { userId: targetUserId } } });
-      state.users = state.users.filter((u) => u.userId.toString() !== targetUserId);
-      const entry = logActivity(roomStates, roomId, "kicked", targetUser.username);
+      io.to(targetUser.socketId).emit("kicked", {
+        message: "You were removed by the host",
+      });
+      await Room.findOneAndUpdate(
+        { roomId },
+        { $pull: { participants: { userId: targetUserId } } },
+      );
+      state.users = state.users.filter(
+        (u) => u.userId.toString() !== targetUserId,
+      );
+      const entry = logActivity(
+        roomStates,
+        roomId,
+        "kicked",
+        targetUser.username,
+      );
       io.to(roomId).emit("presence-update", { users: state.users });
       if (entry) io.to(roomId).emit("activity-update", { entry });
     }
@@ -291,8 +422,11 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("toggle-lock", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
-    if (requester?.role !== "host") return socket.emit("error", { message: "Only host can lock" });
+    const requester = room?.participants.find(
+      (p) => p.userId.toString() === socket.user._id.toString(),
+    );
+    if (requester?.role !== "host")
+      return socket.emit("error", { message: "Only host can lock" });
     room.isLocked = !room.isLocked;
     await room.save();
     const type = room.isLocked ? "locked" : "unlocked";
@@ -303,8 +437,11 @@ export const registerRoomSocket = (io, socket, roomStates) => {
 
   socket.on("end-room", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
-    if (requester?.role !== "host") return socket.emit("error", { message: "Only host can end" });
+    const requester = room?.participants.find(
+      (p) => p.userId.toString() === socket.user._id.toString(),
+    );
+    if (requester?.role !== "host")
+      return socket.emit("error", { message: "Only host can end" });
 
     const state = roomStates[roomId];
     if (state) {
@@ -316,9 +453,12 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     delete roomStates[roomId];
   });
 
-  socket.on("leave-room", ({ roomId }) => handleLeave(io, socket, roomId, roomStates));
+  socket.on("leave-room", ({ roomId }) =>
+    handleLeave(io, socket, roomId, roomStates),
+  );
   socket.on("disconnect", () => {
-    if (socket.currentRoom) handleLeave(io, socket, socket.currentRoom, roomStates);
+    if (socket.currentRoom)
+      handleLeave(io, socket, socket.currentRoom, roomStates);
   });
 };
 
@@ -326,7 +466,7 @@ const handleLeave = async (io, socket, roomId, roomStates) => {
   if (!roomStates[roomId]) return;
 
   roomStates[roomId].users = roomStates[roomId].users.filter(
-    (u) => u.socketId !== socket.id
+    (u) => u.socketId !== socket.id,
   );
   socket.leave(roomId);
 
@@ -341,7 +481,7 @@ const handleLeave = async (io, socket, roomId, roomStates) => {
     } catch (err) {
       console.error(`[Leave] Final save failed:`, err.message);
     }
-    
+
     // THE FIX: Grace period timeout so reloads don't wipe out memory before DB confirms write
     EMPTY_ROOM_TIMEOUTS[roomId] = setTimeout(() => {
       if (roomStates[roomId] && roomStates[roomId].users.length === 0) {
