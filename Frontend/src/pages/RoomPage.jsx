@@ -7,6 +7,7 @@ import useCanvas from "../hooks/useCanvas";
 import { useToast } from "@/hooks/use-toast";
 import { PanelRightOpen } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
+import html2canvas from "html2canvas";
 
 import RoomToolbar from "../components/room/RoomToolbar";
 import RoomSidebar from "../components/room/RoomSidebar";
@@ -38,7 +39,6 @@ export default function RoomPage() {
   const [activityLog, setActivityLog] = useState([]);
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: "", message: "", action: null });
   
-  // NEW: Shortcut Modal
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [activeTool, setActiveTool] = useState("draw");
@@ -68,7 +68,7 @@ export default function RoomPage() {
   const reactionIdRef = useRef(0);
   const messageInputRef = useRef(null);
   const fileInputRef = useRef(null);
-  const importInputRef = useRef(null); // Reference for importing JSON
+  const importInputRef = useRef(null); 
 
   const { canvasRef, previewCanvasRef, workspaceRef, gridRef, strokesRef, replayStrokes, drawStroke, setTool, setColor, setSize, setShapeType, resetZoom, scale, offset } = useCanvas(socket, roomId);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -181,7 +181,35 @@ export default function RoomPage() {
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); toast({ title: "Room ID copied!" }); };
   const copyInviteLink = () => { navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`); toast({ title: "Invite link copied!" }); };
 
-  // --- EXPORT & IMPORT (Feature 1) ---
+  // --- EXPORT AS FULL PNG (Canvas + HTML Elements) ---
+  const handleExportPNG = async () => {
+    if (!workspaceRef.current) return;
+    
+    // Hide cursors temporarily so they don't show up in the image
+    const cursorContainer = document.getElementById("cursor-container");
+    if (cursorContainer) cursorContainer.style.display = "none";
+
+    try {
+      const canvas = await html2canvas(workspaceRef.current, {
+        backgroundColor: theme === "dark" ? "#000000" : "#ffffff",
+        useCORS: true,
+        scale: 2, 
+      });
+      
+      const link = document.createElement("a");
+      link.download = `penspace-${roomId}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+      toast({ title: "Board exported as PNG!" });
+    } catch (err) {
+      console.error("Export failed:", err);
+      toast({ title: "Export failed", variant: "destructive" });
+    } finally {
+      if (cursorContainer) cursorContainer.style.display = "block";
+    }
+  };
+
+  // --- EXPORT/IMPORT JSON ---
   const handleExportJSON = () => {
     const data = { strokes: strokesRef.current, stickyNotes, textNodes, imageNodes };
     const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
@@ -337,7 +365,7 @@ export default function RoomPage() {
         activeTool={activeTool} handleToolSelect={handleToolSelect} activeShape={activeShape}
         showShapeMenu={showShapeMenu} setShowShapeMenu={setShowShapeMenu} handleShapeSelect={handleShapeSelect}
         activeColor={activeColor} handleColorChange={handleColorChange} activeSize={activeSize} handleSizeChange={handleSizeChange}
-        handleUndo={handleUndo} resetZoom={resetZoom} handleExport={handleExportJSON} isHost={isHost} handleClear={handleClear}
+        handleUndo={handleUndo} resetZoom={resetZoom} handleExport={handleExportPNG} isHost={isHost} handleClear={handleClear}
         theme={theme} toggleTheme={toggleTheme} fileInputRef={fileInputRef} handleImageUpload={handleImageUpload}
         showStickyForm={showStickyForm} setShowStickyForm={setShowStickyForm} SHAPES={SHAPES}
       />
@@ -351,7 +379,6 @@ export default function RoomPage() {
         handleExportJSON={handleExportJSON} importInputRef={importInputRef}
       />
 
-      {/* Toggles sidebar and shows shortcut reminder */}
       {!chatOpen && (
         <div className="fixed top-6 right-6 flex items-center gap-3 z-40">
           <button onClick={() => setShowShortcuts(true)} className="bg-background border-2 border-foreground rounded-full w-10 h-10 shadow-[4px_4px_0px_0px_currentColor] hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-[2px_2px_0px_0px_currentColor] transition-all font-black text-lg">?</button>

@@ -1,12 +1,14 @@
 import { 
   LogOut, MessageSquare, Activity, X, Copy, Link as LinkIcon, 
-  Lock, Unlock, ShieldAlert, UserMinus, ArrowRight, Users
+  Lock, Unlock, ShieldAlert, UserMinus, ArrowRight, Users,
+  Download, Upload
 } from "lucide-react";
 
 export default function RoomSidebar({
   panelRef, chatOpen, setChatOpen, users = [], isLocked, isHost, currentUser, handleKick, roomId, copyRoomId, copyInviteLink,
   handleToggleLock, handleEndRoom, handleLeave, activeTab, setActiveTab, chat = [], typingUsers = [], chatBottomRef,
-  messageInputRef, message, handleTyping, handleSendMessage, activityLog = []
+  messageInputRef, message, handleTyping, handleSendMessage, activityLog = [],
+  handleExportJSON, importInputRef
 }) {
   if (!chatOpen) return null;
 
@@ -86,8 +88,22 @@ export default function RoomSidebar({
         )}
       </div>
 
-      {/* 🔴 FIXED: Persistent Host Controls and Leave Room button pinned to the absolute bottom! 🔴 */}
+      {/* 🔴 Persistent Controls & Export/Import 🔴 */}
       <div className="border-t-2 border-foreground bg-background p-3 shrink-0 flex flex-col gap-2">
+        
+        {/* Data Backup Controls */}
+        <div className="flex gap-2">
+          <button onClick={handleExportJSON} className="flex-1 flex justify-center items-center gap-1 text-[10px] border-2 border-foreground py-2 font-bold uppercase tracking-widest hover:bg-foreground hover:text-background transition-colors shadow-[2px_2px_0px_0px_currentColor]">
+            <Download className="w-3 h-3" strokeWidth={3}/> Save JSON
+          </button>
+          {isHost && (
+            <button onClick={() => importInputRef.current?.click()} className="flex-1 flex justify-center items-center gap-1 text-[10px] border-2 border-foreground py-2 font-bold uppercase tracking-widest hover:bg-[#93c5fd] hover:text-black transition-colors shadow-[2px_2px_0px_0px_currentColor]">
+              <Upload className="w-3 h-3" strokeWidth={3}/> Load JSON
+            </button>
+          )}
+        </div>
+
+        {/* Host Controls */}
         {isHost && (
           <div className="flex gap-2">
             <button className="flex-1 flex justify-center items-center gap-1 text-[10px] border-2 border-foreground py-2 font-bold uppercase tracking-widest hover:bg-[#fde047] hover:text-black transition-colors shadow-[2px_2px_0px_0px_currentColor]" onClick={handleToggleLock}>
@@ -98,6 +114,7 @@ export default function RoomSidebar({
             </button>
           </div>
         )}
+        
         <button onClick={handleLeave} className="w-full flex items-center justify-center gap-2 bg-background border-2 border-foreground py-2 font-black uppercase tracking-widest text-xs hover:bg-destructive hover:text-white transition-colors shadow-[2px_2px_0px_0px_currentColor]">
           <LogOut className="w-4 h-4"/> Leave Room
         </button>

@@ -20,6 +20,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.34.3",
+    "html2canvas": "^1.4.1",
     "lucide-react": "^0.575.0",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
