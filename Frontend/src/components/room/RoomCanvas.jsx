@@ -33,7 +33,8 @@ export default function RoomCanvas({
           <div key={note.id} className="absolute w-56 min-h-32 border-2 border-black p-4 cursor-move group flex flex-col justify-between shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] transition-shadow pointer-events-auto" style={{ left: note.x, top: note.y, backgroundColor: note.color }} onMouseDown={(e) => handleElementMouseDown(e, note, "sticky")}>
             <p className="text-sm text-black font-bold whitespace-pre-wrap break-words select-none leading-snug">{note.text}</p>
             <p className="text-[10px] font-black uppercase tracking-widest text-black/60 mt-4 border-t border-black/20 pt-1">@{note.username}</p>
-            <button onMouseDown={(e) => { e.stopPropagation(); handleDeleteSticky(note.id); }} className="absolute top-2 right-2 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">✕</button>
+            {/* Switched to onClick to fix delete bug */}
+            <button onClick={(e) => { e.stopPropagation(); handleDeleteSticky(note.id); }} className="absolute top-2 right-2 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
           </div>
         ))}
 
@@ -61,7 +62,8 @@ export default function RoomCanvas({
               </span>
             )}
             
-            <button onMouseDown={(e) => { e.stopPropagation(); handleDeleteText(node.id); }} className="absolute -top-3 -right-3 w-5 h-5 border-2 border-black bg-white text-black text-xs font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">✕</button>
+            {/* Switched to onClick */}
+            <button onClick={(e) => { e.stopPropagation(); handleDeleteText(node.id); }} className="absolute -top-3 -right-3 w-5 h-5 border-2 border-black bg-white text-black text-xs font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
           </div>
         ))}
 
@@ -71,7 +73,8 @@ export default function RoomCanvas({
               <img src={node.src} className="w-full h-full object-contain pointer-events-none" alt="canvas element" />
             </div>
 
-            <button onMouseDown={(e) => { e.stopPropagation(); handleDeleteImage(node.id); }} className="absolute -top-3 -right-3 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-10">✕</button>
+            {/* Switched to onClick */}
+            <button onClick={(e) => { e.stopPropagation(); handleDeleteImage(node.id); }} className="absolute -top-3 -right-3 w-6 h-6 border-2 border-black bg-white text-black font-black flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition-all shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] z-50 cursor-pointer">✕</button>
             
             <div 
               className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize opacity-0 group-hover:opacity-100 bg-foreground" 

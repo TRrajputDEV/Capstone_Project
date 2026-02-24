@@ -2,6 +2,7 @@ import { Room } from "../models/room.model.js";
 
 const SAVE_INTERVAL = 8000;
 const saveIntervals = {};
+const EMPTY_ROOM_TIMEOUTS = {}; // NEW: Caches rooms to prevent wipe-on-reload
 
 const stopBatchSave = (roomId) => {
   if (saveIntervals[roomId]) {
@@ -48,10 +49,16 @@ const startBatchSave = (roomId, roomStates) => {
 
 export const registerRoomSocket = (io, socket, roomStates) => {
 
-  // ── JOIN ROOM ──────────────────────────────────────────
   socket.on("join-room", async ({ roomId }) => {
     try {
-      const room = await Room.findOne({ roomId });
+      // Clear the deletion timeout if a user reconnects instantly (page reload)
+      if (EMPTY_ROOM_TIMEOUTS[roomId]) {
+        clearTimeout(EMPTY_ROOM_TIMEOUTS[roomId]);
+        delete EMPTY_ROOM_TIMEOUTS[roomId];
+      }
+
+      // Use .lean() to prevent Mongoose proxy issues in memory
+      const room = await Room.findOne({ roomId }).lean();
       if (!room) return socket.emit("error", { message: "Room not found" });
       if (room.isEnded) return socket.emit("error", { message: "This room has ended" });
 
@@ -90,7 +97,6 @@ export const registerRoomSocket = (io, socket, roomStates) => {
           raisedHand: false,
         });
       } else {
-        // Update socketId on reconnect
         alreadyPresent.socketId = socket.id;
       }
 
@@ -118,33 +124,24 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     }
   });
 
-  // ── DRAW STROKE ────────────────────────────────────────
   socket.on("draw-stroke", ({ roomId, stroke }) => {
     if (!roomStates[roomId]) return;
     const fullStroke = { ...stroke, userId: socket.user._id, timestamp: Date.now() };
     roomStates[roomId].strokes.push(fullStroke);
     roomStates[roomId].unsavedChanges = true;
-    // Broadcast to others only — sender already drew it locally
     socket.to(roomId).emit("receive-stroke", { stroke: fullStroke });
   });
 
-  // ── THUMBNAIL ──────────────────────────────────────────
   socket.on("save-thumbnail", ({ roomId, thumbnail }) => {
     if (!roomStates[roomId]) return;
     roomStates[roomId].thumbnail = thumbnail;
     roomStates[roomId].unsavedChanges = true;
   });
 
-  // ── CURSOR ─────────────────────────────────────────────
   socket.on("cursor-move", ({ roomId, x, y }) => {
-    socket.to(roomId).emit("cursor-update", {
-      userId: socket.user._id,
-      username: socket.user.username,
-      x, y,
-    });
+    socket.to(roomId).emit("cursor-update", { userId: socket.user._id, username: socket.user.username, x, y });
   });
 
-  // ── UNDO ───────────────────────────────────────────────
   socket.on("undo", ({ roomId }) => {
     if (!roomStates[roomId]) return;
     const strokes = roomStates[roomId].strokes;
@@ -158,13 +155,10 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     io.to(roomId).emit("stroke-undo", { strokes: roomStates[roomId].strokes });
   });
 
-  // ── CLEAR BOARD ────────────────────────────────────────
   socket.on("clear-board", async ({ roomId }) => {
     if (!roomStates[roomId]) return;
     const room = await Room.findOne({ roomId });
-    const participant = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
-    );
+    const participant = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
     if (participant?.role !== "host") return socket.emit("error", { message: "Only host can clear" });
 
     roomStates[roomId].strokes = [];
@@ -179,34 +173,20 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (entry) io.to(roomId).emit("activity-update", { entry });
   });
 
-  // ── CHAT ───────────────────────────────────────────────
   socket.on("send-message", ({ roomId, message }) => {
     if (!roomStates[roomId] || !message?.trim()) return;
-    const chatMessage = {
-      senderId: socket.user._id,
-      senderName: socket.user.username,
-      message: message.trim(),
-      timestamp: Date.now(),
-    };
+    const chatMessage = { senderId: socket.user._id, senderName: socket.user.username, message: message.trim(), timestamp: Date.now() };
     roomStates[roomId].chat.push(chatMessage);
     roomStates[roomId].unsavedChanges = true;
     io.to(roomId).emit("receive-message", { message: chatMessage });
   });
 
-  // ── TYPING ─────────────────────────────────────────────
-  socket.on("typing-start", ({ roomId }) => {
-    socket.to(roomId).emit("user-typing", { username: socket.user.username });
-  });
-  socket.on("typing-stop", ({ roomId }) => {
-    socket.to(roomId).emit("user-stopped-typing", { username: socket.user.username });
-  });
+  socket.on("typing-start", ({ roomId }) => socket.to(roomId).emit("user-typing", { username: socket.user.username }));
+  socket.on("typing-stop", ({ roomId }) => socket.to(roomId).emit("user-stopped-typing", { username: socket.user.username }));
 
-  // ── RAISE HAND ─────────────────────────────────────────
   socket.on("raise-hand", ({ roomId }) => {
     if (!roomStates[roomId]) return;
-    const u = roomStates[roomId].users.find(
-      (u) => u.userId.toString() === socket.user._id.toString()
-    );
+    const u = roomStates[roomId].users.find((u) => u.userId.toString() === socket.user._id.toString());
     if (u) {
       u.raisedHand = !u.raisedHand;
       io.to(roomId).emit("hand-raised", { userId: socket.user._id, username: socket.user.username, raisedHand: u.raisedHand });
@@ -214,22 +194,12 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     }
   });
 
-  // ── REACTIONS ──────────────────────────────────────────
-  socket.on("send-reaction", ({ roomId, emoji }) => {
-    io.to(roomId).emit("receive-reaction", {
-      userId: socket.user._id,
-      username: socket.user.username,
-      emoji,
-    });
-  });
-
-  // ── STICKY NOTES ───────────────────────────────────────
   socket.on("add-sticky", ({ roomId, note }) => {
     if (!roomStates[roomId]) return;
     const fullNote = { ...note, userId: socket.user._id, username: socket.user.username };
     roomStates[roomId].stickyNotes.push(fullNote);
     roomStates[roomId].unsavedChanges = true;
-    io.to(roomId).emit("receive-sticky", { note: fullNote });
+    socket.to(roomId).emit("receive-sticky", { note: fullNote }); // FIXED: socket.to stops sender from duplicating
   });
 
   socket.on("update-sticky", ({ roomId, noteId, updates }) => {
@@ -246,10 +216,9 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (!roomStates[roomId]) return;
     roomStates[roomId].stickyNotes = roomStates[roomId].stickyNotes.filter((n) => n.id !== noteId);
     roomStates[roomId].unsavedChanges = true;
-    io.to(roomId).emit("sticky-deleted", { noteId });
+    socket.to(roomId).emit("sticky-deleted", { noteId });
   });
 
-  // ── TEXT NODES ─────────────────────────────────────────
   socket.on("add-text-node", ({ roomId, node }) => {
     if (!roomStates[roomId]) return;
     const fullNode = { ...node, userId: socket.user._id, username: socket.user.username };
@@ -273,10 +242,9 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (!roomStates[roomId]) return;
     roomStates[roomId].textNodes = roomStates[roomId].textNodes?.filter((n) => n.id !== nodeId) || [];
     roomStates[roomId].unsavedChanges = true;
-    io.to(roomId).emit("text-node-deleted", { nodeId });
+    socket.to(roomId).emit("text-node-deleted", { nodeId });
   });
 
-  // ── IMAGE NODES ────────────────────────────────────────
   socket.on("add-image-node", ({ roomId, node }) => {
     if (!roomStates[roomId]) return;
     const fullNode = { ...node, userId: socket.user._id, username: socket.user.username };
@@ -300,17 +268,14 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (!roomStates[roomId]) return;
     roomStates[roomId].imageNodes = roomStates[roomId].imageNodes?.filter((n) => n.id !== nodeId) || [];
     roomStates[roomId].unsavedChanges = true;
-    io.to(roomId).emit("image-node-deleted", { nodeId });
+    socket.to(roomId).emit("image-node-deleted", { nodeId });
   });
 
-  // ── KICK ───────────────────────────────────────────────
   socket.on("kick-participant", async ({ roomId, targetUserId }) => {
     const state = roomStates[roomId];
     if (!state) return;
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
-    );
+    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
     if (requester?.role !== "host") return socket.emit("error", { message: "Only host can kick" });
 
     const targetUser = state.users.find((u) => u.userId.toString() === targetUserId);
@@ -324,12 +289,9 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     }
   });
 
-  // ── TOGGLE LOCK ────────────────────────────────────────
   socket.on("toggle-lock", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
-    );
+    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
     if (requester?.role !== "host") return socket.emit("error", { message: "Only host can lock" });
     room.isLocked = !room.isLocked;
     await room.save();
@@ -339,12 +301,9 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     if (entry) io.to(roomId).emit("activity-update", { entry });
   });
 
-  // ── END ROOM ───────────────────────────────────────────
   socket.on("end-room", async ({ roomId }) => {
     const room = await Room.findOne({ roomId });
-    const requester = room?.participants.find(
-      (p) => p.userId.toString() === socket.user._id.toString()
-    );
+    const requester = room?.participants.find((p) => p.userId.toString() === socket.user._id.toString());
     if (requester?.role !== "host") return socket.emit("error", { message: "Only host can end" });
 
     const state = roomStates[roomId];
@@ -357,7 +316,6 @@ export const registerRoomSocket = (io, socket, roomStates) => {
     delete roomStates[roomId];
   });
 
-  // ── LEAVE ──────────────────────────────────────────────
   socket.on("leave-room", ({ roomId }) => handleLeave(io, socket, roomId, roomStates));
   socket.on("disconnect", () => {
     if (socket.currentRoom) handleLeave(io, socket, socket.currentRoom, roomStates);
@@ -383,7 +341,14 @@ const handleLeave = async (io, socket, roomId, roomStates) => {
     } catch (err) {
       console.error(`[Leave] Final save failed:`, err.message);
     }
-    stopBatchSave(roomId);
-    delete roomStates[roomId];
+    
+    // THE FIX: Grace period timeout so reloads don't wipe out memory before DB confirms write
+    EMPTY_ROOM_TIMEOUTS[roomId] = setTimeout(() => {
+      if (roomStates[roomId] && roomStates[roomId].users.length === 0) {
+        stopBatchSave(roomId);
+        delete roomStates[roomId];
+        console.log(`[Cleanup] Room ${roomId} purged from memory`);
+      }
+    }, 15000);
   }
 };
