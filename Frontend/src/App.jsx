@@ -5,12 +5,19 @@ import RegisterPage from "./pages/RegisterPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProtectedRoute from "./components/auth/ProtectedRoute";
 import RoomPage from "./pages/RoomPage";
+import LandingPage from "./pages/LandingPage"; // <-- NEW IMPORT
 
 export default function App() {
   const { user } = useAuth();
 
   return (
     <Routes>
+      {/* NEW: Landing Page Route */}
+      <Route 
+        path="/" 
+        element={user ? <Navigate to="/dashboard" /> : <LandingPage />} 
+      />
+      
       <Route
         path="/login"
         element={user ? <Navigate to="/dashboard" /> : <LoginPage />}
@@ -27,7 +34,6 @@ export default function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="*" element={<Navigate to="/dashboard" />} />
       <Route
         path="/room/:roomId"
         element={
@@ -36,6 +42,9 @@ export default function App() {
           </ProtectedRoute>
         }
       />
+      
+      {/* Catch-all now redirects to Landing Page instead of Dashboard */}
+      <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   );
 }
