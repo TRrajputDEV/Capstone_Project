@@ -15,4 +15,9 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+export const generateAiCanvasData = async (prompt) => {
+  const response = await api.post("/rooms/ai/generate", { prompt });
+  return response.data.data;
+};
+
 export default api;

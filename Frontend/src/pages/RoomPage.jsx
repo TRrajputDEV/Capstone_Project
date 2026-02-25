@@ -13,6 +13,7 @@ import RoomToolbar from "../components/room/RoomToolbar";
 import RoomSidebar from "../components/room/RoomSidebar";
 import RoomOverlay from "../components/room/RoomOverlay";
 import RoomCanvas from "../components/room/RoomCanvas";
+import { generateAiCanvasData } from "../services/api";
 
 const STICKY_COLORS = ["#fef08a", "#86efac", "#f9a8d4", "#93c5fd", "#fdba74", "#c4b5fd"];
 const SHAPES = [
@@ -63,6 +64,11 @@ export default function RoomPage() {
   const [typingUsers, setTypingUsers] = useState([]);
   const [floatingMessages, setFloatingMessages] = useState([]);
 
+  // AI State
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+
   const typingTimeoutRef = useRef(null);
   const chatBottomRef = useRef(null);
   const reactionIdRef = useRef(0);
@@ -86,7 +92,7 @@ export default function RoomPage() {
     if ((e.ctrlKey || e.metaKey) && e.key === "z") { e.preventDefault(); handleUndo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key === "0") { e.preventDefault(); resetZoom(); return; }
     if (e.key === "?" || e.key === "/") { e.preventDefault(); setShowShortcuts((p) => !p); return; }
-    if (e.key === "Escape") { messageInputRef.current?.blur(); setShowShapeMenu(false); setShowStickyForm(false); setConfirmModal({isOpen: false}); setEditingTextId(null); setShowShortcuts(false); return; }
+    if (e.key === "Escape") { messageInputRef.current?.blur(); setShowShapeMenu(false); setShowStickyForm(false); setShowAiModal(false); setConfirmModal({isOpen: false}); setEditingTextId(null); setShowShortcuts(false); return; }
     
     if (e.key === "d" || e.key === "D") { handleToolSelect("draw"); return; }
     if (e.key === "e" || e.key === "E") { handleToolSelect("erase"); return; }
@@ -181,21 +187,16 @@ export default function RoomPage() {
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); toast({ title: "Room ID copied!" }); };
   const copyInviteLink = () => { navigator.clipboard.writeText(`${window.location.origin}/room/${roomId}`); toast({ title: "Invite link copied!" }); };
 
-  // --- EXPORT AS FULL PNG (Canvas + HTML Elements) ---
   const handleExportPNG = async () => {
     if (!workspaceRef.current) return;
-    
-    // Hide cursors temporarily so they don't show up in the image
     const cursorContainer = document.getElementById("cursor-container");
     if (cursorContainer) cursorContainer.style.display = "none";
-
     try {
       const canvas = await html2canvas(workspaceRef.current, {
         backgroundColor: theme === "dark" ? "#000000" : "#ffffff",
         useCORS: true,
         scale: 2, 
       });
-      
       const link = document.createElement("a");
       link.download = `penspace-${roomId}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -209,7 +210,6 @@ export default function RoomPage() {
     }
   };
 
-  // --- EXPORT/IMPORT JSON ---
   const handleExportJSON = () => {
     const data = { strokes: strokesRef.current, stickyNotes, textNodes, imageNodes };
     const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
@@ -340,6 +340,27 @@ export default function RoomPage() {
     return () => { window.removeEventListener("mousemove", handleElementMouseMove); window.removeEventListener("mouseup", handleElementMouseUp); };
   }, [draggingElement, handleElementMouseMove, handleElementMouseUp]);
 
+  // 🔴 ADDED: AI Generation Handler
+  const handleGenerateAI = async () => {
+    if (!aiPrompt.trim() || !isHost) return;
+    setIsAiLoading(true);
+    try {
+      const aiCanvasData = await generateAiCanvasData(aiPrompt);
+      
+      // Pass it directly to your existing import logic so it syncs for everyone!
+      socket.emit("import-board", { roomId, data: aiCanvasData });
+      
+      toast({ title: "✨ Canvas generated successfully!" });
+      setAiPrompt("");
+      setShowAiModal(false);
+    } catch (error) {
+      console.error(error);
+      toast({ title: "AI Generation failed", description: "Try making your prompt more specific.", variant: "destructive" });
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
   return (
     <div className="w-screen h-screen bg-background text-foreground overflow-hidden relative select-none font-sans selection:bg-[#fde047] selection:text-black">
       
@@ -358,7 +379,6 @@ export default function RoomPage() {
 
       <RoomOverlay floatingMessages={floatingMessages} cursors={cursors} />
 
-      {/* Hidden input for importing JSON */}
       <input type="file" ref={importInputRef} accept=".json" style={{ display: "none" }} onChange={handleImportJSON} />
 
       <RoomToolbar
@@ -368,6 +388,8 @@ export default function RoomPage() {
         handleUndo={handleUndo} resetZoom={resetZoom} handleExport={handleExportPNG} isHost={isHost} handleClear={handleClear}
         theme={theme} toggleTheme={toggleTheme} fileInputRef={fileInputRef} handleImageUpload={handleImageUpload}
         showStickyForm={showStickyForm} setShowStickyForm={setShowStickyForm} SHAPES={SHAPES}
+        handleGenerateAI={handleGenerateAI} aiPrompt={aiPrompt} setAiPrompt={setAiPrompt} 
+        isAiLoading={isAiLoading} showAiModal={showAiModal} setShowAiModal={setShowAiModal}
       />
 
       <RoomSidebar
